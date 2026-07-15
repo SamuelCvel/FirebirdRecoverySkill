@@ -1,0 +1,56 @@
+{
+  "skill_name": "firebird-recovery",
+  "evals": [
+    {
+      "id": 1,
+      "name": "header-corrupt-page-size",
+      "prompt": "Estou com um problema serio aqui. O banco Firebird 2.5 do nosso sistema (arquivo BANCO.FDB, uns 440 MB) parou de abrir. Quando rodo gstat -h ele cospe so 'unable to allocate memory from operating system'. gfix e gbak nem conectam. O servico Firebird esta no ar e os outros bancos da maquina funcionam. Tem como recuperar isso ou ja era? O arquivo esta em C:\\Dados\\Recuperar\\BANCO.FDB.",
+      "expected_output": "Plano em etapas claras para o caso de corrupcao do byte de page_size no header. Mencao a copia de seguranca, identificacao do page_size real, patch reversivel do byte, gstat de validacao, gbak salvage + restore, verificacao final. Cita procedures/scripts da skill e explica por que NAO precisa parar o servico (so este banco isolado via gfix -shut).",
+      "assertions": [
+        "Identifica a classe de corrupcao como problema no header (page_size) - cita 'page_size', 'header', 'offset 0x10' ou 'cabecalho'",
+        "Recomenda fazer uma copia binaria do arquivo ANTES de qualquer escrita",
+        "Cita o comando gstat -h para inspecao do header",
+        "Inclui gbak -b com flags -ignore e -g como parte do salvamento",
+        "Inclui passo de restore via gbak -c para banco novo apos o salvage",
+        "Responde sobre o servico: NAO recomenda parar o servico inteiro; menciona gfix -shut ou copia nao-servida",
+        "Inclui passo de verificacao final (gfix -v -full, gbak round-trip, ou contagens via isql)",
+        "Resposta esta em portugues brasileiro"
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "gbak-para-em-tabela",
+      "prompt": "Rodei gbak -b -v -ignore -g num banco firebird 2.5 (.fdb de 1.2GB) e ele para com 'gbak: ERROR: ... reading table FATURAS_2023'. Outras tabelas processaram normalmente antes. Como faco para salvar o resto dos dados sem parar nessa tabela? Posso lidar com perder parte das faturas de 2023, mas nao quero perder os outros 80+ tabelas.",
+      "expected_output": "Para FB 2.5: drop+recreate da tabela problema (com FKs entrando dropadas antes), salvando dados em tabela auxiliar. Restore para banco novo. Recriacao + repopulacao. NAO recomendar -skip_data (e FB 3.0+).",
+      "assertions": [
+        "NAO recomenda gbak -skip_data nem -include_data para Firebird 2.5 (essas flags so existem a partir do FB 3.0)",
+        "Recomenda estrategia de DROP da tabela problema (ou outra forma de remove-la) antes de tentar gbak novamente",
+        "Menciona salvar os dados recuperaveis em tabela auxiliar ou via dump SQL antes do drop",
+        "Aborda FKs entrando na tabela problema (drop antes do DROP TABLE; readicionar depois)",
+        "Fornece comandos concretos (ALTER TABLE DROP CONSTRAINT, DROP TABLE, gbak, isql)",
+        "Recomenda copia binaria do banco antes das operacoes destrutivas",
+        "Inclui restore (gbak -c) em banco novo apos o backup limpo",
+        "Resposta esta em portugues brasileiro"
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "transacoes-em-limbo",
+      "prompt": "O servidor onde roda nosso Firebird 2.5 caiu por queda de energia ontem a noite (sem nobreak, eu sei). Hoje os usuarios reclamam que algumas operacoes travam. Rodei gfix -list e ele mostra 4 transacoes em limbo (IDs 458912, 458913, 458914, 458915). Como resolvo? Posso simplesmente commitar todas ou rolar back? Tem risco?",
+      "expected_output": "Explicacao do conceito + comandos gfix -commit/-rollback/-prompt. Default conservador: rollback. Validacao com gfix -list vazio depois. Prevencao com UPS.",
+      "assertions": [
+        "Explica o que e uma transacao em limbo (2PC ou crash do servidor durante commit)",
+        "Fornece os comandos gfix -commit ID e gfix -rollback ID para resolucao por transacao",
+        "Menciona gfix -prompt como modo interativo para iterar nos limbos",
+        "Recomenda ROLLBACK como escolha conservadora padrao quando ha duvida",
+        "Aborda o risco de commitar arbitrariamente sem confirmacao",
+        "Menciona prevencao (UPS/nobreak)",
+        "Inclui passo de validacao final (gfix -list para confirmar lista vazia, ou gbak para confirmar consistencia)",
+        "Resposta esta em portugues brasileiro"
+      ],
+      "files": []
+    }
+  ]
+}

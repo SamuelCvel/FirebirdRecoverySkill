@@ -1,0 +1,49 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# BANCOS FIREBIRD — NUNCA commit (dados sensiveis, tamanho enorme)
+*.fdb
+*.gdb
+*.ib
+*.fbk
+*.nbk
+
+# Sidecars de backup binario
+*.hdrbak
+*.flagsbak
+*.pagesbak
+*.pre-repair.hdrbak
+*.bytesbak
+
+# Logs de execucao
+*.gfix*.log
+*.gbak*.log
+*.salvage*.log
+*.restore*.log
+*.chunked-save*.log
+
+# Workspaces de teste local da skill (nao versionar outputs)
+firebird-recovery-workspace/
+evals/results/
+evals/iteration-*/
+
+# Skill packaged files gerados localmente (mantemos so o release em dist/)
+skill/*.skill
+
+# Node modules (caso adicionemos ferramentas web)
+node_modules/
