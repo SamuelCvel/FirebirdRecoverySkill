@@ -116,6 +116,7 @@ Todos os scripts aceitam `-User`/`-Password` (padrão SYSDBA/masterkey) e `-Gsta
 | Script | Para que serve |
 |---|---|
 | `sql/contagem-objetos.sql` | conta tabelas/views/procedures/generators — comparar antes/depois |
+| `sql/contagem-registros-por-tabela.sql` | conta `COUNT(*)` linha-por-tabela (com `-1` em tabelas que dão erro); ideal para diff antes/depois provar "0 perda" |
 | `sql/encontrar-paginas-ruins.sql` | usa `MON$RECORD_STATS` e `MON$IO_STATS` (FB 2.5+) para apontar suspeitos |
 | `sql/validar-fk-orfas.sql` | encontra registros que vão quebrar FK no `gbak -c` |
 | `sql/gerar-script-salvage.sql` | gera comandos `INSERT INTO destino SELECT ...` para salvamento tabela-a-tabela |

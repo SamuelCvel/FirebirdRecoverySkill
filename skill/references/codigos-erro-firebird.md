@@ -58,6 +58,8 @@ Use Ctrl+F para localizar a mensagem que você está vendo.
 | `connection rejected by remote interface` | credenciais ou config errada | **02** |
 | `database file specification is invalid` | path errado ou arquivo apagado | **02** |
 | `database shutdown` | banco em `gfix -shut` | **02** ou **08** (online) |
+| `bad parameters on attach or create database` (gbak/isql) | banco em `single-user maintenance` após restore que quebrou em FK — o `gfix` atacha nesse modo mas o `gbak` recusa | rodar `gfix -online` antes de qualquer coisa (**08** seção 0) |
+| `SQLSTATE = 08006` / `connection lost to database` durante query com JOIN pesado em `RDB$RELATION_CONSTRAINTS`/`RDB$REF_CONSTRAINTS`/`RDB$INDEX_SEGMENTS` | banco degradado; o engine derruba a conexão em query complexa que toca a área com defeito | usar `SHOW TABLE <nome>;` no isql (uma tabela por vez) em vez do JOIN — mais leve, evita a área ruim; ver **05** seção 4c |
 | `record from transaction X is stuck in limbo` | limbo | **07** |
 | `wrong record length` | metadata diverge do dado | **05** seção 4 ou **06** |
 | `arithmetic exception, numeric overflow, or string truncation` | tipo de dado mudou entre versions ou corrupção | analisar caso a caso |

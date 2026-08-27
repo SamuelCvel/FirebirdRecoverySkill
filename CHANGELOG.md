@@ -4,6 +4,25 @@ Todas as mudanças notáveis a este projeto são documentadas aqui.
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.1.0] — 2026-08-27
+
+### Added
+
+- **Novo SQL helper** `sql/contagem-registros-por-tabela.sql` — `EXECUTE BLOCK` que faz `COUNT(*)` linha-por-tabela e emite `NOMETABELA|QTD`, com `-1` em tabelas que dão erro (não aborta o inventário). Ideal para diff antes/depois provando "0 perda" de dados após restore.
+
+### Changed / Fixed (aprendizados incorporados de health check em banco de produção de 1,6 GB)
+
+- **procedure 04 (páginas corrompidas)** — nova subseção "O que o `firebird.log` diz em paralelo" com os padrões `Record N has bad transaction K in table T` e `Page N is an orphan`. Também novo **achado empírico documentado**: um banco pode reportar 170 erros no `gfix -v -full` e ainda ser 100% recuperável via `gbak -b -ignore` + restore (checksum cosmético). **Sempre testar a lente 3 antes de escalar a procedure destrutiva.**
+- **procedure 05 (índices e restrições)** — 2 novas seções:
+  - **4b**: documenta `RDB$INDICES.RDB$INDEX_INACTIVE = 3` (estado "cannot commit / pending" após restore que quebrou em FK). Query correta usa `!= 0`, não `= 1`.
+  - **4c**: workflow completo de 8 passos "restore quebrou em FK → limpeza → validação", com backup forense antes do `DELETE`. Inclui aviso sobre `SQLSTATE 08006 - connection lost to database` em JOINs pesados em `RDB$` em banco degradado; usar `SHOW TABLE <nome>` como alternativa.
+- **procedure 08 (pós-recuperação)** — nova **seção 0** obrigatória antes das lentes: verificar se banco não está em `single-user maintenance` (comum após restore com FK violation). Se estiver, `gfix -online` primeiro — senão `gbak` reclama `bad parameters on attach or create database`.
+- **references/codigos-erro-firebird.md** — 2 novas entradas: `bad parameters on attach or create database` (banco em single-user) e `SQLSTATE 08006 connection lost` em JOIN complexo (usar SHOW TABLE).
+
+### Nota de versão
+
+Nenhuma quebra de compatibilidade em relação à 1.0.0. Adição de conhecimento + novo SQL helper. Consumidores que já dependem dos comandos e procedures existentes continuam funcionando sem ajuste.
+
 ## [1.0.0] — 2026-06-05
 
 ### Added

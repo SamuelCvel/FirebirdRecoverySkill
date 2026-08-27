@@ -37,11 +37,25 @@ O log é o seu raio-x. Exemplos de leitura:
 
 Anote as páginas afetadas (ou as 5-10 primeiras se forem muitas). Se forem todas índices, é caso fácil.
 
+### O que o `firebird.log` diz em paralelo
+
+Enquanto o `gfix -v -full` roda, ele escreve detalhes por-registro/por-página em `C:\Program Files\Firebird\Firebird_2_5\firebird.log`. Padrões úteis para identificar **qual tabela** tem cada erro:
+
+```
+Record 82097 has bad transaction 240102052 in table TABELA_A (1009)
+Record 113309 has bad transaction 240112913 in table TABELA_B (1021)
+Page 196167 is an orphan
+```
+
+Casando: `Record N has bad transaction K` = registro `N` na tabela nomeada é o que aparece nos `record level errors` do sumário. Anotar essas tabelas ajuda a priorizar. Em banco de produção maduro é comum ter esses registros — quase sempre são **cosméticos** (ver observação na seção 2).
+
 ## 2. Tentativa não-destrutiva: gbak com -ignore
 
 `gbak -b -ignore -g` instrui o backup a ignorar erros de **checksum** e não rodar GC. Se a corrupção é em poucas páginas com checksum ruim e os dados subjacentes estão íntegros, o backup atravessa.
 
 > **Limite do `-ignore`:** essa flag cobre **checksum errado**, não cobre `wrong page type` nem `I/O error / Final do arquivo alcançado`. Esses são erros estruturais — `gbak` aborta e você precisa **dropar a tabela** que disparou o erro (procedure 06) antes de tentar de novo.
+
+> **Achado empírico importante (caso real):** um banco de 1,6 GB apresentou no `gfix -v -full` um sumário de **170 erros** (116 record + 53 index + 1 database page), mas o `gbak -b -v -ignore -g` completou em **68 segundos com 0 erros e 0 warnings**. Após restore + limpeza de 6 FKs órfãs, o `gfix -v -full` no recuperado voltou **completamente limpo (0 bytes de log)**, sem perda de registro (delta 0 em 6,46 milhões). Ou seja: **centenas de erros no gfix não são necessariamente perda de dado**. Se o `gbak -ignore` passa limpo, os erros do gfix eram checksum cosmético (bit-flip na área de checksum, dados subjacentes íntegros) e o restore recompõe tudo. **Sempre teste a lente 3 antes de escalar para procedures destrutivas.**
 
 ```powershell
 .\scripts\Salvage-Backup.ps1 -Database "<cópia>" -BackupFile "<basename>.salvage.fbk"

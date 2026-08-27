@@ -4,6 +4,18 @@ Esta procedure roda **depois** que o banco recuperado existe (saída de qualquer
 
 Pulando esta procedure: já houve mais de um caso de banco "recuperado" voltar para produção e quebrar 48h depois porque uma constraint estava silenciosamente desabilitada ou faltava 0,5% dos registros. Validar é barato; replicar incidente é caro.
 
+## 0. Pré-requisito: banco NÃO pode estar em `single-user maintenance`
+
+Se o restore anterior parou em FK/constraint (`cannot commit index`), o banco frequentemente **fica em modo single-user maintenance** — visível em `gstat -h` como `Attributes: force write, single-user maintenance`. O `gfix -v -full` funciona nesse estado, **mas `gbak -b` e `isql` reclamam com `bad parameters on attach or create database`**.
+
+Antes de rodar as lentes, tire o banco desse modo:
+
+```powershell
+& "C:\Program Files\Firebird\Firebird_2_5\bin\gfix.exe" -online -user SYSDBA -password masterkey "<RECUPERADO.FDB>"
+```
+
+Confirme com `gstat -h`: `Attributes` deve mostrar só `force write` (sem `single-user maintenance` e sem `shutdown`).
+
 ## 1. As 4 lentes
 
 Cada uma cobre um tipo de problema. Sucesso só é declarado quando **todas** passam.

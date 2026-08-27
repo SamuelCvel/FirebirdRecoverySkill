@@ -119,6 +119,43 @@ Quando a corrupção pegou metadata (drop ainda mais frequente em FB 2.0), tente
 
 `-mo` (`-metadata`) recria estrutura sem inserir registros. Depois, pump os dados via `Salvage-TableByTable.ps1` ou via `INSERT ... SELECT` apontando para o `.fbk` montado em outro banco via `EXECUTE STATEMENT ... ON EXTERNAL` (FB 2.5+ suporta external data sources).
 
+## 4b. Estado dos índices FK pós-restore quebrado
+
+Quando `gbak -c` reporta `cannot commit index FK_X` + `violation of FOREIGN KEY constraint`, o índice **é criado no banco destino, mas fica em estado intermediário** com `RDB$INDICES.RDB$INDEX_INACTIVE = 3` (não 0 = ativo, não 1 = normalmente inativo). Esse valor `3` significa "pending / cannot commit".
+
+Como listar todos afetados:
+
+```sql
+SELECT TRIM(RDB$INDEX_NAME) AS NOME, RDB$INDEX_INACTIVE AS ESTADO, TRIM(RDB$RELATION_NAME) AS TABELA
+FROM RDB$INDICES
+WHERE RDB$INDEX_INACTIVE != 0 AND RDB$SYSTEM_FLAG = 0;
+```
+
+Atenção à condição `!= 0` (não `= 1`) — senão perde os que estão em estado 3.
+
+Depois de limpar os órfãos (seção 2), reativar com:
+
+```sql
+ALTER INDEX <nome_do_indice> ACTIVE;
+```
+
+O `ALTER INDEX ACTIVE` recria o índice do zero. Se ainda houver órfã, ele vai reportar `violation of PRIMARY or UNIQUE KEY constraint` e permanecer em estado 3 — nesse caso volte à seção 2 e refine a busca de órfãs.
+
+## 4c. Workflow completo (visto em caso real de health check)
+
+Sequência canônica quando o restore para em FK violation. Cada passo é reversível se você mantiver os originais (procedure 02):
+
+1. **Ler o log** e extrair todos os `cannot commit index` únicos (`Select-String -Pattern 'cannot commit index'`).
+2. **Descobrir os metadados** de cada FK afetada via `SHOW TABLE <filha>;` no isql (evita JOINs pesados em `RDB$` que podem derrubar a conexão em banco degradado — ver observação abaixo).
+3. **Contar órfãs por FK** com `SELECT COUNT(*) FROM filha F WHERE NOT EXISTS (SELECT 1 FROM pai P WHERE ...)`. Se retornar `0`, é FK que só ficou pendente por ordem de commit e vai reativar limpa.
+4. **Backup forense**: `SELECT * FROM filha F WHERE NOT EXISTS (...)` com `OUTPUT arquivo.txt` no isql — gravar em texto TODOS os campos das órfãs antes de deletar. Fica como evidência.
+5. **Apresentar contagens ao usuário** antes de qualquer `DELETE` — decisão de negócio é dele.
+6. **DELETE** por FK, em transação única com `COMMIT` no fim.
+7. **`ALTER INDEX ... ACTIVE`** para cada FK.
+8. **Voltar às 4 lentes** (procedure 08) para confirmar banco limpo.
+
+> **Cuidado com queries em RDB$ em banco degradado:** `JOIN` entre `RDB$RELATION_CONSTRAINTS`, `RDB$REF_CONSTRAINTS` e `RDB$INDEX_SEGMENTS` (típico para pegar `(FK, filha_cols, pai, pai_cols)` num query só) pode derrubar a conexão (`SQLSTATE 08006 - connection lost to database`) em banco com corrupção residual. Se acontecer: prefira `SHOW TABLE <nome>;` no isql (uma tabela por vez) — é mais leve e não faz JOIN interno.
+
 ## 5. Verificação final
 
 Ao terminar:
