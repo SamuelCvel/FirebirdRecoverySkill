@@ -13,11 +13,13 @@ A partir da v1.1.1, os comandos, flags e comportamentos documentados foram **ver
 Este repositório é também um marketplace de plugins. Dentro do Claude Code:
 
 ```
-/plugin marketplace add SamuelCvel/FirebirdRecoverySkill
+/plugin marketplace add https://github.com/SamuelCvel/FirebirdRecoverySkill.git
 /plugin install firebird-recovery@samuelcvel
 ```
 
-Pelo terminal: `claude plugin marketplace add SamuelCvel/FirebirdRecoverySkill` e `claude plugin install firebird-recovery@samuelcvel`. Como plugin, a skill aparece como `/firebird-recovery:firebird-recovery` e aciona sozinha pelos sintomas. Atualizações: `claude plugin update firebird-recovery@samuelcvel`.
+Pelo terminal: `claude plugin marketplace add https://github.com/SamuelCvel/FirebirdRecoverySkill.git` e `claude plugin install firebird-recovery@samuelcvel`. O atalho `SamuelCvel/FirebirdRecoverySkill` também funciona, mas clona por **SSH** (precisa de chave SSH cadastrada no GitHub); a URL HTTPS funciona em qualquer máquina.
+
+Como plugin, a skill aparece como `/firebird-recovery:firebird-recovery` e aciona sozinha pelos sintomas (custo fixo ~260 tokens por sessão; ~3,5k quando acionada). Atualizações: `claude plugin update firebird-recovery@samuelcvel`.
 
 ### Como skill pessoal (cópia)
 
