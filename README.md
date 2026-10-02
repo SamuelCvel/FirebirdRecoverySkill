@@ -41,6 +41,24 @@ Cada [Release](https://github.com/SamuelCvel/FirebirdRecoverySkill/releases) tra
 git config core.hooksPath .githooks  # trava de termos sensíveis no commit
 ```
 
+Testes (sem módulo externo; rodam no Windows PowerShell 5.1 e no PowerShell 7):
+
+```powershell
+.\tests\Run-Tests.ps1                 # unitários: não precisam do Firebird (é o que roda no CI)
+.\tests\Run-Tests.ps1 -Integration    # + integração: precisa do Firebird 2.5 rodando
+```
+
+A integração cria tudo numa pasta temporária, a partir do `EMPLOYEE.FDB` de exemplo e de bancos sintéticos, e provoca as corrupções que a skill trata: header com bit trocado, arquivo e `.fbk` truncados, página de dados zerada, FK composta órfã escondida por índice inativo. O pump `-Auto` é conferido contra um gabarito tirado do `RDB$DB_KEY`: o destino tem que ter **exatamente** as linhas da origem menos as das páginas zeradas. Credenciais: `ISC_USER`/`ISC_PASSWORD`, senão `SYSDBA`/`masterkey`.
+
+Evals:
+
+- **Qualidade da resposta**: `skills/firebird-recovery/evals/evals.json` (formato do skill-creator: prompt + assertions).
+- **Gatilho** (a skill dispara quando deve e fica quieta nos quase-acertos): `evals/` na raiz, para o `claude plugin eval`. Rodada barata:
+
+  ```bash
+  claude plugin eval . --ablation none --runs 1 --no-publish
+  ```
+
 ## Estrutura
 
 ```
@@ -53,9 +71,11 @@ skills/firebird-recovery/
 ├── sql/         (5 helpers)              contagens, sonda de tabelas, FK órfãs, cópia via EDS
 ├── templates/   (2)                      relatório técnico e mensagem para o cliente
 ├── references/  (4 docs)                 header ODS 11.2, códigos de erro, cheatsheet, checklist
-└── evals/       (evals.json)             casos de teste com assertions
+└── evals/       (evals.json)             casos de qualidade com assertions
+evals/                   casos de gatilho do `claude plugin eval` (dispara / não dispara)
+tests/                   testes unitários e de integração (Run-Tests.ps1)
 tools/                   empacotador, junction de desenvolvimento, trava de termos sensíveis
-.github/workflows/       CI: verificações + pacote .skill nas Releases
+.github/workflows/       CI: lint, testes, verificações + pacote .skill nas Releases
 ```
 
 ## Cenários cobertos
@@ -100,7 +120,7 @@ Todo procedimento segue este contrato:
 
 A skill aciona sozinha, roda a triagem (procedure 01), identifica como caso de header corrompido (procedure 03), roda `scripts/Diagnose-FirebirdHeader.ps1` e conduz até o restore final com o `Restore-Clean.ps1`.
 
-Ou invoque explicitamente: `/firebird-recovery C:\caminho\banco.fdb`.
+Ou invoque explicitamente: `/firebird-recovery:firebird-recovery C:\caminho\banco.fdb` (instalada como plugin) ou `/firebird-recovery C:\caminho\banco.fdb` (cópia pessoal).
 
 ## Contribuindo
 
@@ -121,8 +141,9 @@ Bugs, novos casos, ou correções são bem-vindos.
 - [x] Health check automatizado (`Test-FirebirdHealth.ps1`) — v1.2.0
 - [x] Troca segura em produção (`Swap-ProductionDatabase.ps1`) e evidências de causa raiz (`Get-FirebirdEnvironmentReport.ps1`) — v1.2.0
 - [x] Distribuição como plugin/marketplace do Claude Code e CI com pacote nas Releases — v1.2.0
-- [ ] Pump automático por chave com bissecção e salto de faixas ruins (hoje: uma janela por execução).
-- [ ] Testes automatizados (Pester), lint (PSScriptAnalyzer) e evals de gatilho (`claude plugin eval`).
+- [x] Pump automático por chave (`Salvage-TableByTable -Auto`): encolhe a janela, pula só as linhas ilegíveis e relata as faixas perdidas em CSV — v1.3.0
+- [x] Testes unitários e de integração, lint (PSScriptAnalyzer) no CI e evals de gatilho (`claude plugin eval`) — v1.3.0
+- [ ] Salto automático em chave de texto (hoje o `-Auto` para e indica o `-StartKey` para retomar).
 - [ ] Adaptar para Firebird 3.0+ (ODS 12/13).
 
 ## Licença

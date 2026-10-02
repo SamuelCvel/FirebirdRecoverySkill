@@ -51,6 +51,81 @@
         "Resposta esta em portugues brasileiro"
       ],
       "files": []
+    },
+    {
+      "id": 4,
+      "name": "gfix-centenas-de-erros-sistema-funciona",
+      "prompt": "Rodei gfix -v -full numa copia do banco Firebird 2.5 de um cliente (BANCO.FDB, 6 GB) so por precaucao e apareceram 170 erros, a maioria 'Page xxx is an orphan' e alguns 'Index 2 is corrupt' em duas tabelas. O sistema funciona normal, ninguem reclamou de nada. O gfix terminou com exit 0. Preciso parar tudo e fazer backup/restore hoje? Devo rodar gfix -mend direto?",
+      "expected_output": "Nao entrar em panico nem escalar direto para reparo: o numero de linhas do gfix nao mede gravidade e o exit 0 nao significa 'sem erros'. Classificar as mensagens (paginas orfas = espaco perdido, benigno; indice corrompido = reconstruivel). Confirmar pela lente 3: gbak -b -g (round-trip) + restore num banco novo e comparar contagens; health check (Test-FirebirdHealth.ps1 / procedure 08). gfix -mend so numa copia e nunca como primeiro passo.",
+      "assertions": [
+        "NAO recomenda gfix -mend na producao como primeiro passo (no maximo numa copia, depois de diagnosticar)",
+        "Recomenda confirmar a gravidade com gbak -b (round-trip) e restore num banco novo antes de concluir algo",
+        "Explica que o numero de erros do gfix nao mede a gravidade OU que o gfix -v sai com exit 0 mesmo encontrando erros",
+        "Classifica as mensagens: 'orphan' de pagina como espaco perdido/benigno e indice corrompido como reconstruivel (desativar/ativar ou recriar o indice)",
+        "Recomenda trabalhar numa copia do arquivo",
+        "Cita o health check da skill (Test-FirebirdHealth.ps1 ou procedure 08) ou a comparacao de contagens por tabela",
+        "Resposta esta em portugues brasileiro"
+      ],
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "fk-orfas-pergunta-antes-de-apagar",
+      "prompt": "Restaurei o backup de um banco Firebird 2.5 com -inactive e agora, ao ativar a FK FK_ITENS_PEDIDO (ITENS_PEDIDO -> PEDIDOS, chave composta EMPRESA+NUMERO), da 'violation of FOREIGN KEY constraint'. Achei 37 itens apontando para pedidos que nao existem mais. Posso so dar um DELETE nesses 37 itens e seguir?",
+      "expected_output": "Antes de qualquer DELETE: guardar as linhas orfas (tabela de quarentena, CSV ou script de INSERT) para auditoria; confirmar com o usuario/responsavel do negocio; apresentar alternativas (recriar o pedido pai como placeholder, corrigir a referencia, ou apagar com aval). Conferir as orfas comparando TODAS as colunas da FK juntas (NOT EXISTS com EMPRESA e NUMERO; validar-fk-orfas.sql). Depois ativar a FK e revalidar.",
+      "assertions": [
+        "Recomenda salvar as linhas orfas (tabela de quarentena, CSV ou script de INSERT) ANTES de qualquer DELETE",
+        "Pede confirmacao do usuario ou do responsavel pelos dados antes de apagar (nao apaga por conta propria)",
+        "Apresenta alternativa ao DELETE (recriar o registro pai como placeholder ou corrigir a referencia)",
+        "A consulta de orfas compara as DUAS colunas da FK juntas (NOT EXISTS com EMPRESA e NUMERO) ou cita sql/validar-fk-orfas.sql",
+        "Inclui ativar a FK/indice depois da limpeza e revalidar (ALTER INDEX ... ACTIVE ou recriar a constraint)",
+        "Resposta esta em portugues brasileiro"
+      ],
+      "files": []
+    },
+    {
+      "id": 6,
+      "name": "single-user-apos-restore-falho",
+      "prompt": "Fiz gbak -c de um backup do Firebird 2.5 e o restore deu erro no final por causa de um indice unico com valor duplicado. O banco novo abre no isql, mas o sistema da 'connection lost to database' quando o segundo usuario entra. O gstat -h mostra 'Attributes force write, single-user maintenance'. O que esta acontecendo e como libero o banco?",
+      "expected_output": "O restore falhou na ativacao do indice e deixou o banco em modo de manutencao single-user (so 1 conexao; a segunda cai). Tratar a causa (achar as duplicatas com GROUP BY ... HAVING COUNT(*) > 1, decidir com o usuario, ativar o indice), conferir indices inativos, e so entao gfix -online normal. Confirmar com gstat -h (sem 'single-user maintenance') e validar antes de liberar.",
+      "assertions": [
+        "Explica que o restore com erro deixou o banco em modo de manutencao single-user (por isso so uma conexao funciona)",
+        "Recomenda gfix -online (normal) para tirar o banco do modo de manutencao",
+        "Trata a causa: localizar as duplicatas (GROUP BY ... HAVING COUNT(*) > 1) e ativar o indice antes de liberar o banco",
+        "Recomenda conferir com gstat -h que o atributo 'single-user maintenance' sumiu",
+        "Recomenda verificar indices inativos/contagens antes de colocar em producao",
+        "Resposta esta em portugues brasileiro"
+      ],
+      "files": []
+    },
+    {
+      "id": 7,
+      "name": "restore-so-metadata-flag-certa",
+      "prompt": "Preciso criar um banco Firebird 2.5 vazio, so com a estrutura (tabelas, indices, procedures) de um backup BANCO.FBK, para usar como destino de um resgate por EXECUTE STATEMENT. Qual o comando exato do gbak?",
+      "expected_output": "gbak -c -m (ou -meta_data) BANCO.FBK DESTINO.FDB com usuario e senha; de preferencia com -i (-inactive) para o destino aceitar linhas em qualquer ordem durante a carga. Avisar que -mo NAO e metadata no 2.5 (e -mode read_only/read_write e consome o argumento seguinte).",
+      "assertions": [
+        "Usa gbak -c com -m ou -meta_data para restaurar so a estrutura",
+        "NAO usa -mo como abreviacao de metadata (no 2.5, -mo e -mode)",
+        "Mostra o comando completo com arquivo .fbk de origem e .fdb de destino",
+        "Sugere -i/-inactive (indices inativos) para a carga, ou explica quando ativar os indices depois",
+        "Resposta esta em portugues brasileiro"
+      ],
+      "files": []
+    },
+    {
+      "id": 8,
+      "name": "corrupcao-massiva-parar-cedo",
+      "prompt": "O banco Firebird 2.5 (12 GB) de um cliente estava num HD que comecou a dar setores defeituosos. Ja copiei o .FDB para outro disco. O gbak falha logo no inicio, o gfix -v -full lista milhares de erros e uma sondagem mostrou 14 tabelas ilegiveis, incluindo as de movimento. O ultimo backup bom e de 3 dias atras. Vale a pena tentar recuperar tabela por tabela?",
+      "expected_output": "Com 14 tabelas ilegiveis (muitos sitios), aplicar o criterio de parar cedo: o caminho principal e restaurar o backup de 3 dias e redigitar/reimportar a diferenca; extracao por tabela (pump por chave/EDS) so para as tabelas criticas do periodo, com expectativa de perda; nao trabalhar no disco com defeito (trocar o HD, imagem antes); definir expectativas com o cliente; investigar causa (hardware) antes de voltar a producao.",
+      "assertions": [
+        "Recomenda parar as tentativas de reparo amplo diante de muitos sitios de corrupcao (criterio de parar cedo / 3+ sitios)",
+        "Coloca o restore do ultimo backup bom como caminho principal e quantifica o que se perde (3 dias)",
+        "Propoe extracao seletiva (pump por chave/EDS) so das tabelas criticas do periodo, sem prometer recuperacao total",
+        "Recomenda nao voltar a usar o disco com defeito (trocar o HD e checar o hardware antes de produzir)",
+        "Recomenda alinhar expectativas com o cliente sobre a perda",
+        "Resposta esta em portugues brasileiro"
+      ],
+      "files": []
     }
   ]
 }

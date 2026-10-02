@@ -2,6 +2,15 @@
 
 Esta procedure é **obrigatória antes de qualquer escrita** no arquivo do banco — ela cobre cópia de evidência, sidecar de backup, gestão do serviço e detecção de locks. Se você pular, vai descobrir tarde que perdeu a única cópia.
 
+## Sumário
+
+- [1. Cópia de evidência (sempre primeiro)](#1-cópia-de-evidência-sempre-primeiro)
+- [2. Sidecar de backup binário](#2-sidecar-de-backup-binário)
+- [3. Estado do serviço Firebird](#3-estado-do-serviço-firebird)
+- [4. Detecção de lock antes de gravar](#4-detecção-de-lock-antes-de-gravar)
+- [5. Verificações ambientais](#5-verificações-ambientais)
+- [6. Estado pronto para a próxima procedure](#6-estado-pronto-para-a-próxima-procedure)
+
 ## 1. Cópia de evidência (sempre primeiro)
 
 O arquivo corrompido é evidência forense. Manter intacto permite:

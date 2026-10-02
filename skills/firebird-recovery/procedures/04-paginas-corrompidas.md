@@ -10,6 +10,17 @@
 
 **Diferença em relação à procedure 03:** o header está OK (`gstat -h` lê). O problema está em uma ou mais páginas internas (dados, índices, PIP, TIP, pointer pages).
 
+## Sumário
+
+- [Pré-requisitos](#pré-requisitos)
+- [1. Mapear o estrago](#1-mapear-o-estrago)
+- [2. Tentativa não-destrutiva: gbak com -ignore](#2-tentativa-não-destrutiva-gbak-com--ignore)
+- [3. Tentativa destrutiva controlada: gfix -mend -full -ignore](#3-tentativa-destrutiva-controlada-gfix--mend--full--ignore)
+- [4. Caso grave: corrupção em PIP / TIP](#4-caso-grave-corrupção-em-pip--tip)
+- [5. I/O error: suspeite do hardware antes de continuar](#5-io-error-suspeite-do-hardware-antes-de-continuar)
+- [5b. Sinal de parar cedo — corrupção massiva](#5b-sinal-de-parar-cedo--corrupção-massiva)
+- [6. Verificação final (sempre)](#6-verificação-final-sempre)
+
 ## Pré-requisitos
 
 - Procedure 02 executada.

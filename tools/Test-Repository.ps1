@@ -10,6 +10,8 @@
   - Sintaxe de todos os .ps1 (parser do PowerShell).
   - Referencias nas docs: todo 'scripts/X.ps1', 'sql/X.sql', 'procedures/X.md', 'references/X.md' e
     'templates/X.md' citado nos .md da skill tem que existir.
+  - Sumario: procedure/referencia com mais de 100 linhas tem secao de sumario, e os links dela
+    apontam para titulos que existem.
 
   Exit codes: 0 ok; 1 alguma verificacao falhou.
 
@@ -83,6 +85,35 @@ foreach($f in $md){
   }
 }
 if($faltando -eq 0){ Ok "referencias a arquivos nas docs da skill: todas existem ($($md.Count) .md)" }
+
+# ---------------- sumario nas docs longas ----------------
+# Procedure/referencia com mais de 100 linhas precisa de '## Sumario' (o Claude ve o escopo ao abrir
+# so o comeco do arquivo) e todo link do sumario tem que apontar para um titulo que existe.
+$tituloSumario = "## Sum$([char]0xE1)rio"   # sem acento literal: o PS 5.1 le .ps1 sem BOM como ANSI
+function Get-MdSlug([string]$h){ (($h.Trim().ToLowerInvariant()) -replace '[^\p{L}\p{N}_\- ]', '') -replace ' ', '-' }
+$problemasSumario = 0
+$longas = Get-ChildItem -LiteralPath $skillDir -Recurse -Filter *.md -File | Where-Object { $_.Name -ne 'SKILL.md' -and $_.DirectoryName -notmatch '[\\/](templates|evals)$' }
+foreach($f in $longas){
+  $linhas = [IO.File]::ReadAllLines($f.FullName)
+  $rel = $f.FullName.Substring($Root.Length + 1)
+  $slugs = New-Object 'System.Collections.Generic.HashSet[string]'
+  $fence = $false
+  foreach($l in $linhas){
+    if($l.StartsWith('```')){ $fence = -not $fence; continue }
+    if(-not $fence -and $l -match '^#{1,6} (.+)$'){ [void]$slugs.Add((Get-MdSlug $Matches[1])) }
+  }
+  $ini = [Array]::IndexOf($linhas, $tituloSumario)
+  if($ini -lt 0){
+    if($linhas.Count -gt 100){ $problemasSumario++; Falha ("{0} tem {1} linhas e nao tem '{2}'" -f $rel, $linhas.Count, $tituloSumario) }
+    continue
+  }
+  for($i = $ini + 1; $i -lt $linhas.Count -and $linhas[$i] -notmatch '^## '; $i++){
+    foreach($m in [regex]::Matches($linhas[$i], '\]\(#([^)]+)\)')){
+      if(-not $slugs.Contains($m.Groups[1].Value)){ $problemasSumario++; Falha ("{0}: link do sumario '#{1}' nao corresponde a nenhum titulo" -f $rel, $m.Groups[1].Value) }
+    }
+  }
+}
+if($problemasSumario -eq 0){ Ok "sumario nas docs com mais de 100 linhas, links do sumario validos ($(@($longas).Count) .md)" }
 
 Write-Host ""
 if($falhas.Count -gt 0){ Write-Host ("{0} verificacao(oes) falharam." -f $falhas.Count) -ForegroundColor Red; exit 1 }

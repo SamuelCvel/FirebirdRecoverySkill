@@ -102,7 +102,19 @@ Use quando poucas tabelas impedem o backup. `T` = tabela problemática.
 
 ### 3.a Pela chave primária (keyset) — padrão
 
-Rode no banco **de destino** (RESGATE ou DESTINO). Copia uma janela de linhas da origem por vez, começando depois da última chave copiada (modelo testado no FB 2.5.9, com BLOB):
+**Automatizado** (testado no 2.5.9 com páginas de dados zeradas de propósito: as linhas perdidas foram **exatamente** as das páginas ruins):
+
+```powershell
+& "<SKILL>\scripts\Salvage-TableByTable.ps1" -Action pump -Database "<cópia>" -TargetDatabase "<RESGATE ou DESTINO>.fdb" -Table PEDIDO -Auto
+```
+
+- Copia janelas de 5000 linhas pela PK; janela que falha encolhe (500 → 50 → 5 → 1); quando nem 1 linha sai, **pula** a região ruim (busca exponencial + bissecção na última coluna da PK, direto na origem) e segue.
+- PK composta: decompõe `(A,B) > (a,b)` em faixas que o índice posiciona (`A=a AND B>b`, depois `A>a`); com 2 colunas numéricas, atravessa também o começo ilegível do próximo prefixo.
+- Faixas perdidas vão para `<destino>.pump.<TABELA>.csv` (vão para o relatório).
+- **Só pula** erro de página danificada. Erro de SQL, login, permissão ou constraint no destino **para tudo** (não descarta dado bom).
+- **Limite:** se a última coluna da PK não é numérica (ex.: código texto), o `-Auto` para na região ruim e diz a última chave copiada. Retome com `-StartKey` depois da região (ex.: `-StartKey 'C000250'`) e `-Auto` de novo. Sem PK: seção 3.c.
+
+Modelo manual equivalente — rode no banco **de destino** (RESGATE ou DESTINO). Copia uma janela de linhas da origem por vez, começando depois da última chave copiada (testado no FB 2.5.9, com BLOB):
 
 ```sql
 SET TERM ^ ;
@@ -134,7 +146,7 @@ Cada execução é atômica: se a janela bate numa página ruim, **nada** dela �
 3. Quando até `ROWS 1` falha, o próximo registro está na região ruim. **Pule** com a chave: tente `WHERE ID > <última> + 1000 ... ROWS 1`, depois reduza o salto pela metade até achar a primeira chave legível depois do buraco.
 4. Anote cada faixa perdida (`> última` e `< primeira legível`) — vai para o relatório.
 
-**Chave composta** `(A, B)`: use `WHERE A >= ? AND (A > ? OR B > ?) ORDER BY A, B ROWS n` com os parâmetros `(a, a, b)` — o `A >= ?` dá o ponto de partida no índice.
+**Chave composta** `(A, B)`: faça em duas consultas — primeiro `WHERE A = a AND B > b ORDER BY A, B ROWS n` (resto do prefixo atual), depois `WHERE A >= a+1 ORDER BY A, B ROWS n` (prefixos seguintes). Verificado no 2.5.9: um `A > a` sobre só parte do índice composto ainda lê os registros de `A = a` (e bate na página ruim do prefixo); `A >= a+1` (coluna inteira) posiciona certo. Um `A >= a AND (A > a OR B > b)` numa consulta só relê o prefixo inteiro desde o começo.
 
 **Confira o plano antes** (na origem, com `SET PLANONLY ON;` no isql): tem que aparecer `ORDER <índice da PK>` (ex.: `PLAN (PEDIDO ORDER PK_PEDIDO INDEX (PK_PEDIDO))`). Se aparecer `NATURAL`, a consulta varre a tabela inteira e bate na página ruim de qualquer jeito.
 

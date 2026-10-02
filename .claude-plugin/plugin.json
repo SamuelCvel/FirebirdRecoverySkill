@@ -1,7 +1,7 @@
 {
   "name": "firebird-recovery",
   "displayName": "Firebird Recovery",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Diagnóstico, recuperação e validação (health check) de bancos Firebird 2.5 / ODS 11.2 no Windows: procedures passo-a-passo com fallback, scripts PowerShell e SQL verificados no Firebird 2.5.9.",
   "author": {
     "name": "Samuel dos Santos da Silva"

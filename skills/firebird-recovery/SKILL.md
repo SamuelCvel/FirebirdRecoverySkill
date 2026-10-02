@@ -4,7 +4,7 @@ description: Diagnostica e recupera bancos Firebird/InterBase 2.x (.fdb, .gdb, .
 license: MIT
 compatibility: Windows com Windows PowerShell 5.1 ou PowerShell 7 e as ferramentas de linha de comando do Firebird 2.x (gstat, gfix, gbak, isql, nbackup, fbsvcmgr), verificado no Firebird 2.5.9. Validação online exige 2.5.4+.
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
 ---
 
 # Firebird Recovery (Firebird 2.5 / ODS 11.2)
@@ -114,7 +114,7 @@ Scripts PowerShell (Windows PowerShell 5.1 e PowerShell 7). Cada um tem ajuda co
 | `scripts/Repair-FirebirdHeader.ps1` | corrige page_size por `-PageSize`, sidecar `.hdrbak` ou scan (para se divergirem); reversível | procedure 03 |
 | `scripts/Salvage-Backup.ps1` | `gbak -b -v -ignore -g` com log, análise de erros e **tabela que quebrou** | depois do diagnóstico; lente 3 |
 | `scripts/Restore-Clean.ps1` | `gbak -c -v` com log + verificação pós-restore + aviso de banco em manutenção | depois do salvage backup |
-| `scripts/Salvage-TableByTable.ps1` | `list` (contagem de todas as tabelas), `pump` (copia uma janela por chave via EDS), `skip-bad-table` (só FB 3+) | procedure 06 |
+| `scripts/Salvage-TableByTable.ps1` | `list` (contagem de todas as tabelas), `pump` (copia por chave via EDS; `-Auto` vai até o fim pulando as regiões ruins e grava as faixas perdidas em CSV), `skip-bad-table` (só FB 3+) | procedure 06 |
 | `scripts/Firebird-Service.ps1` | status/start/stop do serviço; `gfix -shut full\|single\|multi` / `-online` para isolar 1 banco | qualquer escrita binária no arquivo; troca em produção |
 | `scripts/Demo-CorrupcaoHeader.ps1` | demonstração reversível (setup com o banco de exemplo, corrompe, diagnostica, corrige) | treinamento de equipe |
 | `scripts/_FirebirdCommon.ps1` | funções compartilhadas (carregado pelos outros) | — |

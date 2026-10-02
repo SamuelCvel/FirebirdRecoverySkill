@@ -13,6 +13,16 @@ Acontece quando uma transação distribuída (2-phase commit) ou uma transação
 - Crash de aplicação 2PC envolvendo Firebird + outro RM.
 - Cópia/move do `.fdb` enquanto o servidor o tinha aberto com transação em vôo.
 
+## Sumário
+
+- [Pré-requisitos](#pré-requisitos)
+- [1. Listar limbos](#1-listar-limbos)
+- [2. Decidir commit vs rollback (por transação)](#2-decidir-commit-vs-rollback-por-transação)
+- [3. Executar a decisão](#3-executar-a-decisão)
+- [4. Confirmar fim](#4-confirmar-fim)
+- [Fallback](#fallback)
+- [Prevenção](#prevenção)
+
 ## Pré-requisitos
 
 - Servidor Firebird rodando.

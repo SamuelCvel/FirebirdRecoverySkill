@@ -13,7 +13,11 @@ jobs:
   verificar:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      - name: PyYAML (validacao do frontmatter)
+        shell: pwsh
+        run: python -m pip install --quiet pyyaml
 
       - name: Consistencia do repositorio (JSON, nomes, versao, sintaxe, referencias)
         shell: pwsh
@@ -23,13 +27,27 @@ jobs:
         shell: pwsh
         run: ./tools/Test-SensitiveTerms.ps1
 
-      - name: Pacote .skill (valida o frontmatter com PyYAML)
+      - name: PSScriptAnalyzer (severidade Error)
         shell: pwsh
         run: |
-          python -m pip install --quiet pyyaml
-          ./tools/Build-SkillPackage.ps1
+          if(-not (Get-Module -ListAvailable PSScriptAnalyzer)){ Install-Module PSScriptAnalyzer -Scope CurrentUser -Force }
+          $r = @(Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1)
+          $r | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap | Out-String -Width 240
+          if($r.Count -gt 0){ exit 1 }
 
-      - uses: actions/upload-artifact@v4
+      - name: Testes unitarios (PowerShell 7)
+        shell: pwsh
+        run: ./tests/Run-Tests.ps1
+
+      - name: Testes unitarios (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/Run-Tests.ps1
+
+      - name: Pacote .skill
+        shell: pwsh
+        run: ./tools/Build-SkillPackage.ps1
+
+      - uses: actions/upload-artifact@v7
         with:
           name: firebird-recovery.skill
           path: dist/firebird-recovery.skill
@@ -41,7 +59,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Gerar pacote
         shell: pwsh

@@ -169,7 +169,14 @@ function Get-FbHeaderInfo {
   <# Roda 'gstat -h' (le o arquivo direto, sem conectar) e devolve os campos em um objeto. #>
   param([Parameter(Mandatory = $true)][string]$GstatPath, [Parameter(Mandatory = $true)][string]$Database)
   $r = Invoke-FbNative -Exe $GstatPath -Arguments @('-h', $Database)
-  $t = $r.Text
+  return ConvertFrom-FbGstatHeader -Text $r.Text -Exit $r.Exit
+}
+
+function ConvertFrom-FbGstatHeader {
+  <# Converte o texto do 'gstat -h' em objeto (separado do Get-FbHeaderInfo para poder ser testado). #>
+  param([string]$Text, $Exit = 0)
+  $t = $Text
+  $r = [pscustomobject]@{ Exit = $Exit }
   $num = {
     param([string]$label)
     $m = [regex]::Match($t, ('(?m)^\s*' + [regex]::Escape($label) + ':?\s+(\d+)'))
@@ -233,6 +240,33 @@ function Get-FbServerVersion {
   $m = [regex]::Match($r.Text, 'V(\d+)\.(\d+)\.(\d+)\.(\d+)')
   if($m.Success){ return [version]('{0}.{1}.{2}.{3}' -f $m.Groups[1].Value, $m.Groups[2].Value, $m.Groups[3].Value, $m.Groups[4].Value) }
   return $null
+}
+
+function Test-FbCorruptionError {
+  <#
+    $true se a mensagem indica DANO FISICO (pagina com tipo errado, checksum, falha de leitura,
+    consistency check) - o unico tipo de erro que justifica encolher janela ou pular registros.
+    Erro de SQL, login, permissao, constraint ou arquivo inexistente NAO conta: quem chama deve parar.
+  #>
+  param([string]$Text)
+  return ($Text -match '(?i)appears corrupt|wrong page type|is of wrong type|checksum error|consistency check|bugcheck|wrong record length|I/O error during "?(ReadFile|read)|Error while trying to read')
+}
+
+function Get-FbErrorSummary {
+  <#
+    Resume a saida de erro do isql nas linhas que explicam o problema: o que vem depois de
+    'Statement failed', sem o eco do comando (EDS), o caminho do .sql temporario e a posicao no bloco.
+    Ex.: 'database file appears corrupt () | bad checksum | checksum error on database page 750'
+  #>
+  param([string[]]$Lines, [int]$Max = 3)
+  $all = @($Lines | Where-Object { $_ -match '\S' } | ForEach-Object { $_.Trim() })
+  $i = -1
+  for($k = 0; $k -lt $all.Count; $k++){ if($all[$k] -match '^Statement failed'){ $i = $k; break } }
+  $cand = if($i -ge 0 -and $i + 1 -lt $all.Count){ $all[($i + 1)..($all.Count - 1)] } else { $all }
+  $ruido = '^(After line \d+ in file|-?At (block )?line|-?Data source :|-?Statement :|Execute statement error at|Use CONNECT or CREATE DATABASE)'
+  $msg = @($cand | Where-Object { $_ -notmatch $ruido } | ForEach-Object { ($_.TrimStart('-').Trim()) -replace '^\d{9} : ', '' } | Select-Object -First $Max)
+  if($msg.Count -eq 0){ $msg = @($all | Select-Object -Last $Max) }
+  return ($msg -join ' | ')
 }
 
 function Test-FbAdmin {

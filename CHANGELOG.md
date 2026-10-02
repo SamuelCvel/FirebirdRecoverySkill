@@ -4,6 +4,26 @@ Todas as mudanças notáveis a este projeto são documentadas aqui.
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.3.0] — 2026-10-02
+
+### Added
+
+- **Pump automático por chave** (`Salvage-TableByTable -Action pump -Auto`): copia a tabela inteira por chave primária via EDS e, quando uma janela falha por página danificada, encolhe a janela (→ 50 → 5 → 1), pula **só** as linhas ilegíveis e segue. A próxima chave legível é achada por sondagem exponencial + bissecção; chave composta é decomposta por níveis (`A = a AND B > b`, depois `A >= a+1` — no 2.5, `A > a` num índice composto ainda lê as linhas de `A = a`); chave numérica tenta a lacuna até `-MaxGap`. As faixas copiadas e perdidas vão para um CSV (`-ReportFile`). Erro que **não** é de página (SQL, login, constraint no destino) para o pump em vez de pular dados. Chave de texto: para na região ruim e indica o `-StartKey` para retomar. Conferido contra um gabarito tirado do `RDB$DB_KEY`: o destino fica com **exatamente** as linhas da origem menos as das páginas zeradas (chave inteira, composta — inclusive página na troca de prefixo — e texto).
+- **Testes** (`tests/Run-Tests.ps1`, sem módulo externo, Windows PowerShell 5.1 e PowerShell 7):
+  - 21 unitários, sem Firebird: parser do `gstat -h`, dicas de header, varredura de page_size em arquivos sintéticos, classificação de erro de página, resumo de erro do isql/EDS, credenciais pelo ambiente, empacotador e trava de termos sensíveis.
+  - 35 de integração (`-Integration`) no Firebird 2.5: todos os scripts e SQLs da skill sobre cópias do `EMPLOYEE.FDB` e bancos sintéticos com corrupção provocada (header, arquivo e `.fbk` truncados, página zerada, FK composta órfã), numa pasta temporária.
+- **Evals**:
+  - 5 casos de qualidade em `evals.json`: 170 erros no gfix com o sistema funcionando; FK órfã (salvar e perguntar antes do `DELETE`); `single-user maintenance` depois de restore falho; restore só de metadata com `-m`; corrupção massiva (parar cedo).
+  - 10 casos de **gatilho** para `claude plugin eval` em `evals/`: 6 em que a skill deve disparar (inclusive pedido em inglês) e 4 quase-acertos em que não deve (PostgreSQL, SQLite, SQL de relatório, stored procedure).
+- **CI**: PSScriptAnalyzer (severidade Error; exceções justificadas em `PSScriptAnalyzerSettings.psd1`) e testes unitários nos dois PowerShell; actions `checkout`/`upload-artifact` v7.
+
+### Changed
+
+- **`Salvage-TableByTable`**: o erro mostrado é a causa real do Firebird (ex.: `checksum error on database page 750`), não o eco do comando e o caminho do `.sql` temporário (`Get-FbErrorSummary` no módulo comum).
+- **`_FirebirdCommon`**: `ConvertFrom-FbGstatHeader` separado do `Get-FbHeaderInfo`, para testar o parser sem Firebird.
+- **`Demo-CorrupcaoHeader`**: exit codes iguais aos dos outros scripts (cancelado = 4; header já inválido = 1; correção sem efeito = 2).
+- Procedure 06 (seção 3.a) e SKILL.md documentam o `-Auto`; README com testes, evals e roadmap.
+
 ## [1.2.0] — 2026-10-02
 
 ### Added

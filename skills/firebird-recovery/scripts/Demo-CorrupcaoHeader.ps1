@@ -183,9 +183,9 @@ switch($Action){
   }
 
   'corrupt' {
-    if(-not (Show-Header $Database)){ Write-Warning "Header ja parece invalido. Abortando para nao mascarar o estado."; break }
+    if(-not (Show-Header $Database)){ Write-Warning "Header ja parece invalido. Abortando para nao mascarar o estado."; exit 1 }
     Write-Warning "Isto vai QUEBRAR o banco de proposito. Use APENAS em banco de TESTE."
-    if(-not $PSCmdlet.ShouldProcess($Database, 'ligar o bit 0x80 do byte 0x11 (corromper page_size)')){ Write-Host "Cancelado."; break }
+    if(-not $PSCmdlet.ShouldProcess($Database, 'ligar o bit 0x80 do byte 0x11 (corromper page_size)')){ Write-Host "Cancelado."; exit 4 }
     $orig = Get-ClaimedPageSize $Database
     Set-Content -LiteralPath $bakFile -Value "PAGESIZE=$orig" -Encoding ASCII
     Write-Host "  Valor original salvo em: $bakFile  (PAGESIZE=$orig)" -ForegroundColor DarkGray
@@ -212,7 +212,7 @@ switch($Action){
       Write-Host "  Sem backup; page_size REAL detectado por varredura: $target" -ForegroundColor DarkGray
     }
     if(-not ($VALID -contains $target)){ throw "Nao consegui determinar um page_size valido para corrigir (obtido: $target)." }
-    if(-not $PSCmdlet.ShouldProcess($Database, "regravar page_size=$target no offset 0x10")){ Write-Host "Cancelado."; break }
+    if(-not $PSCmdlet.ShouldProcess($Database, "regravar page_size=$target no offset 0x10")){ Write-Host "Cancelado."; exit 4 }
     $lo = [byte]($target -band 0xFF); $hi = [byte](($target -shr 8) -band 0xFF)
     try {
       Service-StopIfRequested
@@ -224,6 +224,7 @@ switch($Action){
     $g = Invoke-Gstat $Database
     Write-Host $g.Text
     if($g.Exit -eq 0 -and $g.Text -match 'Page size'){ Write-Host "  >> CORRIGIDO com sucesso." -ForegroundColor Green }
-    else { Write-Host "  >> Ainda com problema; verifique." -ForegroundColor Red }
+    else { Write-Host "  >> Ainda com problema; verifique." -ForegroundColor Red; exit 2 }
   }
 }
+exit 0
