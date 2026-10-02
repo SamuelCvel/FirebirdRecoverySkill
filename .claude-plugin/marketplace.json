@@ -1,0 +1,16 @@
+{
+  "name": "samuelcvel",
+  "description": "Skills do Claude Code mantidas por SamuelCvel.",
+  "owner": {
+    "name": "Samuel dos Santos da Silva"
+  },
+  "plugins": [
+    {
+      "name": "firebird-recovery",
+      "source": ".",
+      "description": "Diagnóstico, recuperação e health check de bancos Firebird 2.5 corrompidos (gstat/gfix/gbak/isql), com procedures, scripts PowerShell e SQL verificados.",
+      "category": "database",
+      "tags": ["firebird", "database", "recovery", "windows", "powershell"]
+    }
+  ]
+}

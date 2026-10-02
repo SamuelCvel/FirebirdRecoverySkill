@@ -40,8 +40,8 @@ param(
   [ValidateSet(0,1024,2048,4096,8192,16384)][int]$PageSize = 0,
   [string]$GstatPath = 'C:\Program Files\Firebird\Firebird_2_5\bin\gstat.exe',
   [string]$GfixPath  = 'C:\Program Files\Firebird\Firebird_2_5\bin\gfix.exe',
-  [string]$User      = 'SYSDBA',
-  [string]$Password  = 'masterkey',
+  [string]$User      = $(if($env:ISC_USER){ $env:ISC_USER } else { 'SYSDBA' }),
+  [string]$Password  = $(if($env:ISC_PASSWORD){ $env:ISC_PASSWORD } else { 'masterkey' }),
   [switch]$Isolate,
   [switch]$StopService,
   [switch]$AllowValidHeader
@@ -49,6 +49,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_FirebirdCommon.ps1')
+$GstatPath = Resolve-FbToolPath 'gstat' $GstatPath
+$GfixPath = Resolve-FbToolPath 'gfix' $GfixPath
 
 $bakFile = "$Database.hdrbak"
 if(-not (Test-Path -LiteralPath $Database)){ Exit-FbError "Banco nao encontrado: $Database" 3 }
@@ -108,7 +110,7 @@ try {
   }
   if($Isolate){
     Write-Host "  gfix -shut full -force 0 ..." -ForegroundColor DarkGray
-    $r = Invoke-FbNative -Exe $GfixPath -Arguments @('-shut','full','-force','0','-user',$User,'-password',$Password,$Database)
+    $r = Invoke-FbNative -Exe $GfixPath -Arguments @('-shut','full','-force','0',$Database) -User $User -Password $Password
     if($r.Exit -ne 0){ Write-Warning ("gfix -shut nao funcionou (normal com header corrompido): {0}" -f $r.Text) }
   }
 
@@ -122,7 +124,7 @@ try {
   Write-Host ("  page_size regravado: {0} (bytes 0x{1:X2} 0x{2:X2})" -f $target, $lo, $hi) -ForegroundColor Green
 
   if($Isolate){
-    $r = Invoke-FbNative -Exe $GfixPath -Arguments @('-online','-user',$User,'-password',$Password,$Database)
+    $r = Invoke-FbNative -Exe $GfixPath -Arguments @('-online',$Database) -User $User -Password $Password
     if($r.Exit -ne 0){ Write-Warning ("gfix -online retornou Exit={0}: {1}" -f $r.Exit, $r.Text) }
   }
 } finally {

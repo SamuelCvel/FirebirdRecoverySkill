@@ -13,7 +13,9 @@ Faça nesta ordem; não pule:
 3. **Quando começou e o que aconteceu antes?** (queda de energia? backup mal feito? cópia com o serviço ligado? upgrade? disco cheio?). A causa do incidente orienta o tipo de corrupção esperado.
 4. **Existe backup recente?** Se sim, em que data e onde está. Saber disso **antes** muda o apetite por risco.
 
-Se o usuário não souber alguma, prossiga mesmo assim — a leitura do header (passo 2) geralmente esclarece.
+Se o usuário não souber alguma, prossiga mesmo assim — a leitura do header (passo 2) geralmente esclarece. Para a pergunta 3, o `Get-FirebirdEnvironmentReport.ps1` levanta as evidências sozinho (desligamentos inesperados, erros de disco, forced writes, banco em rede).
+
+> **O banco funciona e o pedido é só validar?** Não precisa de triagem: rode o `Test-FirebirdHealth.ps1` (procedure 08) — com `-SnapshotCopy` se houver usuários conectados.
 
 ## 2. Leitura inicial segura
 

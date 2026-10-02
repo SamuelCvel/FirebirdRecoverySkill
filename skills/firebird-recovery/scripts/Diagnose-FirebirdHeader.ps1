@@ -34,6 +34,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_FirebirdCommon.ps1')
+$GstatPath = Resolve-FbToolPath 'gstat' $GstatPath
 
 if(-not (Test-Path -LiteralPath $Database)){ Exit-FbError "Banco nao encontrado: $Database" 3 }
 if(-not (Test-Path -LiteralPath $GstatPath)){ Exit-FbError "gstat.exe nao encontrado em: $GstatPath" 3 }
@@ -66,9 +67,6 @@ Write-Host ("  tamanho do arquivo: {0:N0} bytes" -f $fileLen)
 if($ods -eq 0x800C -or $ods -eq 0x800D){
   Write-Host "  >> Banco de Firebird 3.0+ (ODS 12/13). Esta skill e para ODS 11 (FB 2.x); o scan por checksum nao se aplica." -ForegroundColor Yellow
 }
-if($pagType0 -eq 1 -and $ods -eq 0x800B -and -not ($flags -band 0x0002)){
-  Write-Host "  >> forced writes DESLIGADO: principal causa de corrupcao apos queda de energia (gfix -write sync)." -ForegroundColor Yellow
-}
 
 # Scan
 $real = Find-FbRealPageSize -Path $Database
@@ -84,13 +82,24 @@ if($truncated){
 # gstat -h
 Write-Host ""
 Write-Host "--- gstat -h ---" -ForegroundColor DarkGray
-$g = Invoke-FbNative -Exe $GstatPath -Arguments @('-h', $Database)
+$g = Get-FbHeaderInfo -GstatPath $GstatPath -Database $Database
 Write-Host $g.Text
+
+# Dicas de saude (so quando o gstat leu o header)
+$hints = @(Get-FbHeaderHints -Info $g)
+if($hints.Count -gt 0){
+  Write-Host ""
+  Write-Host "Dicas de saude:" -ForegroundColor White
+  foreach($h in $hints){
+    $cor = switch($h.Nivel){ 'FALHA' { 'Red' } 'ATENCAO' { 'Yellow' } default { 'Gray' } }
+    Write-Host ("  [{0}] {1}" -f $h.Nivel, $h.Texto) -ForegroundColor $cor
+  }
+}
 
 # Diagnostico
 Write-Host ""
 $verdict = 0
-if($claimedValid -and $g.Exit -eq 0 -and ($g.Text -match 'Page size')){
+if($claimedValid -and $g.Ok){
   if($truncated){
     Write-Host ">> Header OK, mas o arquivo esta TRUNCADO: o fim do banco vai dar I/O error/EOF. Veja procedure 04." -ForegroundColor Red
     $verdict = 4

@@ -29,6 +29,8 @@ Copy-Item -LiteralPath $src -Destination $work -Force
 > ```
 >
 > Nunca rode `-F` no banco vivo. O `-L` precisa conseguir conectar, então não serve para banco com header quebrado.
+>
+> O `Test-FirebirdHealth.ps1 -SnapshotCopy <cópia>` faz exatamente essa sequência (com o `-N` garantido mesmo se a cópia falhar) e roda o health check na cópia.
 
 ### Fallback
 

@@ -33,8 +33,8 @@ param(
   [string]$GbakPath  = 'C:\Program Files\Firebird\Firebird_2_5\bin\gbak.exe',
   [string]$GstatPath = 'C:\Program Files\Firebird\Firebird_2_5\bin\gstat.exe',
   [string]$IsqlPath  = 'C:\Program Files\Firebird\Firebird_2_5\bin\isql.exe',
-  [string]$User      = 'SYSDBA',
-  [string]$Password  = 'masterkey',
+  [string]$User      = $(if($env:ISC_USER){ $env:ISC_USER } else { 'SYSDBA' }),
+  [string]$Password  = $(if($env:ISC_PASSWORD){ $env:ISC_PASSWORD } else { 'masterkey' }),
   [switch]$InactiveIndexes,
   [switch]$OneAtATime,
   [switch]$MetadataOnly,
@@ -44,6 +44,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_FirebirdCommon.ps1')
+$GbakPath = Resolve-FbToolPath 'gbak' $GbakPath
+$GstatPath = Resolve-FbToolPath 'gstat' $GstatPath
+$IsqlPath = Resolve-FbToolPath 'isql' $IsqlPath
 
 if(-not (Test-Path -LiteralPath $BackupFile)){ Exit-FbError ".fbk nao encontrado: $BackupFile" 1 }
 $log = "$TargetDatabase.restore.log"
@@ -61,8 +64,8 @@ $flags = @('-c','-v')
 if($InactiveIndexes){ $flags += '-inactive' }
 if($OneAtATime)     { $flags += '-one_at_a_time' }
 if($MetadataOnly)   { $flags += '-meta_data' }
-$gbakArgs = $flags + @('-user',$User,'-password',$Password) + $ExtraArgs + @('-y', $log, $BackupFile, $TargetDatabase)
-$shown    = ($gbakArgs -join ' ') -replace [regex]::Escape("-password $Password"), '-password ***'
+$gbakArgs = $flags + $ExtraArgs + @('-y', $log, $BackupFile, $TargetDatabase)
+$shown    = $gbakArgs -join ' '
 
 Write-Host ("==== Restore-Clean  |  {0}" -f $TargetDatabase) -ForegroundColor Cyan
 Write-Host ("  origem : {0}" -f $BackupFile)
@@ -71,7 +74,7 @@ Write-Host ("  args   : gbak {0}" -f $shown) -ForegroundColor DarkGray
 Write-Host  "  Executando..." -ForegroundColor DarkGray
 
 $sw = [Diagnostics.Stopwatch]::StartNew()
-$run = Invoke-FbNative -Exe $GbakPath -Arguments $gbakArgs
+$run = Invoke-FbNative -Exe $GbakPath -Arguments $gbakArgs -User $User -Password $Password
 $exit = $run.Exit
 $sw.Stop()
 if($run.Lines.Count -gt 0){ $run.Lines | ForEach-Object { Write-Host ("  " + $_) -ForegroundColor DarkYellow } }

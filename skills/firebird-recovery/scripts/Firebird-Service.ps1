@@ -35,12 +35,13 @@ param(
   [string]$Database,
   [ValidateSet('full','single','multi')][string]$Mode = 'full',
   [string]$GfixPath = 'C:\Program Files\Firebird\Firebird_2_5\bin\gfix.exe',
-  [string]$User     = 'SYSDBA',
-  [string]$Password = 'masterkey'
+  [string]$User     = $(if($env:ISC_USER){ $env:ISC_USER } else { 'SYSDBA' }),
+  [string]$Password = $(if($env:ISC_PASSWORD){ $env:ISC_PASSWORD } else { 'masterkey' })
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_FirebirdCommon.ps1')
+$GfixPath = Resolve-FbToolPath 'gfix' $GfixPath
 
 function Get-FbServiceNames {
   $svc = @(Get-FbServices)
@@ -101,7 +102,7 @@ switch($Action){
     if(-not $Database){ Exit-FbError "-Database e obrigatorio para 'shutdown'." 1 }
     if(-not (Test-Path -LiteralPath $Database)){ Exit-FbError "Banco nao encontrado: $Database" 1 }
     Write-Host ("Tirando o banco {0} de linha (gfix -shut {1} -force 0)..." -f $Database, $Mode) -ForegroundColor Cyan
-    $r = Invoke-FbNative -Exe $GfixPath -Arguments @('-shut', $Mode, '-force', '0', '-user', $User, '-password', $Password, $Database)
+    $r = Invoke-FbNative -Exe $GfixPath -Arguments @('-shut', $Mode, '-force', '0', $Database) -User $User -Password $Password
     $r.Lines | Out-Host
     if($r.Exit -ne 0){ Exit-FbError "gfix -shut falhou (Exit=$($r.Exit))." 2 }
     Write-Host ("OK ({0}). Outros bancos do servidor seguem atendendo." -f $Mode) -ForegroundColor Green
@@ -111,7 +112,7 @@ switch($Action){
     if(-not $Database){ Exit-FbError "-Database e obrigatorio para 'online'." 1 }
     if(-not (Test-Path -LiteralPath $Database)){ Exit-FbError "Banco nao encontrado: $Database" 1 }
     Write-Host ("Devolvendo o banco {0} para producao (gfix -online)..." -f $Database) -ForegroundColor Cyan
-    $r = Invoke-FbNative -Exe $GfixPath -Arguments @('-online', '-user', $User, '-password', $Password, $Database)
+    $r = Invoke-FbNative -Exe $GfixPath -Arguments @('-online', $Database) -User $User -Password $Password
     $r.Lines | Out-Host
     if($r.Exit -ne 0){ Write-Warning "gfix -online retornou Exit=$($r.Exit)."; exit 2 }
     Write-Host "OK." -ForegroundColor Green

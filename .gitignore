@@ -42,8 +42,10 @@ firebird-recovery-workspace/
 evals/results/
 evals/iteration-*/
 
-# Skill packaged files gerados localmente (mantemos so o release em dist/)
-skill/*.skill
+# Pacotes .skill: gerados por tools/Build-SkillPackage.ps1 (localmente e no CI) e publicados
+# como asset das Releases do GitHub - nao vao para o git (um binario esconde conteudo do diff)
+dist/
+*.skill
 
 # Node modules (caso adicionemos ferramentas web)
 node_modules/

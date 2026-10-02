@@ -44,11 +44,13 @@ param(
   [string]$TargetDatabase,
   [string]$GbakPath = 'C:\Program Files\Firebird\Firebird_2_5\bin\gbak.exe',
   [string]$IsqlPath = 'C:\Program Files\Firebird\Firebird_2_5\bin\isql.exe',
-  [string]$User     = 'SYSDBA',
-  [string]$Password = 'masterkey'
+  [string]$User     = $(if($env:ISC_USER){ $env:ISC_USER } else { 'SYSDBA' }),
+  [string]$Password = $(if($env:ISC_PASSWORD){ $env:ISC_PASSWORD } else { 'masterkey' })
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_FirebirdCommon.ps1')
+$GbakPath = Resolve-FbToolPath 'gbak' $GbakPath
+$IsqlPath = Resolve-FbToolPath 'isql' $IsqlPath
 
 if(-not (Test-Path -LiteralPath $Database)){ Exit-FbError "Banco nao encontrado: $Database" 1 }
 function Quote-Sql([string]$s){ return "'" + $s.Replace("'", "''") + "'" }
@@ -60,7 +62,7 @@ switch($Action){
     $sqlFile = Join-Path (Split-Path $PSScriptRoot -Parent) 'sql\contagem-registros-por-tabela.sql'
     if(-not (Test-Path -LiteralPath $sqlFile)){ Exit-FbError "Nao achei $sqlFile" 1 }
     Write-Host ("==== Inventario  |  {0}" -f $Database) -ForegroundColor Cyan
-    $r = Invoke-FbNative -Exe $IsqlPath -Arguments @('-q','-user',$User,'-password',$Password,'-i',$sqlFile,$Database)
+    $r = Invoke-FbNative -Exe $IsqlPath -Arguments @('-q','-i',$sqlFile,$Database) -User $User -Password $Password
     $rows = foreach($l in $r.Lines){
       if($l -match '^\s*(\S+)\|(-?\d+)\s*$'){ [pscustomobject]@{ Tabela = $Matches[1]; Registros = [int64]$Matches[2] } }
     }
@@ -87,9 +89,9 @@ switch($Action){
     }
     $log = "$BackupFile.log"
     foreach($f in @($BackupFile, $log)){ if(Test-Path -LiteralPath $f){ Remove-Item -LiteralPath $f -Force } }
-    $gbakArgs = @('-b','-v','-ignore','-g','-user',$User,'-password',$Password,'-skip_data',($SkipTables -join '|'),'-y',$log,$Database,$BackupFile)
+    $gbakArgs = @('-b','-v','-ignore','-g','-skip_data',($SkipTables -join '|'),'-y',$log,$Database,$BackupFile)
     Write-Host ("==== Salvage com -skip_data: {0}" -f ($SkipTables -join '|')) -ForegroundColor Cyan
-    $run = Invoke-FbNative -Exe $GbakPath -Arguments $gbakArgs
+    $run = Invoke-FbNative -Exe $GbakPath -Arguments $gbakArgs -User $User -Password $Password
     $finishOk = (Test-Path -LiteralPath $log) -and ($null -ne (Select-String -LiteralPath $log -Pattern 'closing file, committing, and finishing'))
     Write-Host ("  gbak exit: {0}  finishing: {1}" -f $run.Exit, $finishOk)
     if($run.Exit -eq 0 -and $finishOk){

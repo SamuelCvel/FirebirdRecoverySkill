@@ -4,6 +4,26 @@ Todas as mudanças notáveis a este projeto são documentadas aqui.
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.2.0] — 2026-10-02
+
+### Added
+
+- **`scripts/Test-FirebirdHealth.ps1`** — health check em 4 lentes com relatório `.md`/`.json`: estado e header (forced writes, % do limite de transações, OIT parado, truncamento), validação online (`fbsvcmgr action_validate`, com usuários conectados) ou `gfix -v -full`, backup **sem** `-ignore` (com reteste usando `-ignore` se falhar), objetos, índices não ativos, registros por tabela, FKs órfãs e comparação com referência. `-SnapshotCopy` faz a cópia consistente por `nbackup -L/-N/-F` e analisa a cópia. Testado em 9 cenários (saudável, página ruim, FK órfã, shutdown, snapshot, referência).
+- **`scripts/Swap-ProductionDatabase.ps1`** — troca segura em produção: pré-checagens (dialect, page size, índices, candidato online, espaço), isolamento por serviço ou `gfix -shut full`, open exclusivo, rename com data (nunca apaga), rollback automático, conferência final, `-WhatIf`/`-Confirm`.
+- **`scripts/Get-FirebirdEnvironmentReport.ps1`** — evidências de causa raiz, somente leitura: arquitetura/versão, `firebird.conf`, banco em rede, forced writes, saúde do disco, eventos de disco/NTFS, desligamentos inesperados, Defender, `firebird.log`.
+- **`templates/relatorio-tecnico.md`** e **`templates/mensagem-cliente.md`**.
+- **Plugin e marketplace do Claude Code** (`.claude-plugin/plugin.json` e `marketplace.json`): `/plugin marketplace add SamuelCvel/FirebirdRecoverySkill` + `/plugin install firebird-recovery@samuelcvel`.
+- **CI** (`.github/workflows/ci.yml`): consistência do repositório, termos sensíveis, validação do frontmatter e pacote `.skill` publicado como asset de cada Release.
+- `tools/Test-Repository.ps1` (JSON, nomes, versão, sintaxe dos `.ps1`, referências a arquivos nas docs), `tools/Build-SkillPackage.ps1` (empacotador próprio com validação YAML), `tools/Install-DevLink.ps1` (junction da skill instalada para o repositório).
+
+### Changed
+
+- **Estrutura:** `skill/` → `skills/firebird-recovery/` (o nome da pasta passa a ser o nome da skill, como a especificação exige). `dist/` sai do git: o `.skill` vem das Releases ou do `Build-SkillPackage.ps1`.
+- **Frontmatter** com `license`, `compatibility` e `metadata.version` (só chaves aceitas pelo upload do claude.ai).
+- **Módulo comum**: localiza o Firebird sozinho (variável `FIREBIRD`, registro, caminhos padrão); credenciais vão para gbak/gfix/isql/fbsvcmgr por `ISC_USER`/`ISC_PASSWORD` **só durante a chamada** (a senha não aparece mais na linha de comando nem na lista de processos); `-User`/`-Password` usam essas variáveis como padrão.
+- **`Diagnose-FirebirdHeader`** mostra dicas de saúde do header (forced writes, shutdown, nbackup, contador de transações, OIT parado).
+- SKILL.md, procedures 01/02/04/08 e README apontam para os scripts novos e para os templates.
+
 ## [1.1.1] — 2026-10-02
 
 Release de **correções**. Tudo que a skill afirma sobre comandos, flags e comportamento foi **verificado no Firebird 2.5.9**: ajuda das ferramentas, código-fonte do 2.5 (`burpswi.h`, `aliceswi.h`, `ods.h`) e testes em cópias do banco de exemplo `EMPLOYEE.FDB`, inclusive com corrupção provocada (página de dados zerada, header com bit trocado, arquivo truncado, `.fbk` truncado, FK composta órfã).

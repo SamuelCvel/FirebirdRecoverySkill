@@ -151,6 +151,12 @@ Get-WinEvent -FilterHashtable @{ LogName='System'; ProviderName='Microsoft-Windo
 
 Desligamento inesperado + `gstat -h` **sem** `force write` em `Attributes` é a combinação clássica de corrupção no Windows: ligue com `gfix -write sync` no banco que voltar para produção.
 
+Tudo isso (e mais: banco em compartilhamento de rede, espaço livre, exclusões do antivírus, bugchecks no `firebird.log`) sai num relatório só, sem alterar nada:
+
+```powershell
+& "<SKILL>\scripts\Get-FirebirdEnvironmentReport.ps1" -Database "<banco>" -Days 60
+```
+
 Se o disco já está reportando warning/unhealthy, **mover o arquivo para outro disco antes de continuar** — caso contrário, novas leituras podem corromper mais.
 
 Detalhes: se o setor é fisicamente ruim, copiar `Copy-Item` falha. Tente:

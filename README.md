@@ -8,40 +8,59 @@ A partir da v1.1.1, os comandos, flags e comportamentos documentados foram **ver
 
 ## Instalação
 
-### Como skill do Claude Code (uso local)
+### Como plugin do Claude Code (recomendado)
 
-Copie a pasta `skill/` para `~/.claude/skills/firebird-recovery/`:
+Este repositório é também um marketplace de plugins. Dentro do Claude Code:
 
-```powershell
-Copy-Item -Recurse skill\* "$HOME\.claude\skills\firebird-recovery\" -Force
+```
+/plugin marketplace add SamuelCvel/FirebirdRecoverySkill
+/plugin install firebird-recovery@samuelcvel
 ```
 
-O Claude Code detecta e a skill fica ativa automaticamente. Verifique invocando `/firebird-recovery` ou apenas descrevendo um problema Firebird — ela aciona sozinha pelos sintomas.
+Pelo terminal: `claude plugin marketplace add SamuelCvel/FirebirdRecoverySkill` e `claude plugin install firebird-recovery@samuelcvel`. Como plugin, a skill aparece como `/firebird-recovery:firebird-recovery` e aciona sozinha pelos sintomas. Atualizações: `claude plugin update firebird-recovery@samuelcvel`.
 
-### Como `.skill` portável (compartilhamento)
+### Como skill pessoal (cópia)
 
-`dist/firebird-recovery.skill` é a pasta da skill compactada em zip (sem assinatura), pronta para enviar a colegas — upload no claude.ai ou cópia para a pasta de skills do Claude Code de destino.
+```powershell
+git clone https://github.com/SamuelCvel/FirebirdRecoverySkill.git
+Copy-Item -Recurse FirebirdRecoverySkill\skills\firebird-recovery "$HOME\.claude\skills\" -Force
+```
+
+Use **uma** forma só (plugin **ou** cópia): com as duas, a skill carrega duas vezes.
+
+### Como `.skill` (claude.ai / compartilhamento)
+
+Cada [Release](https://github.com/SamuelCvel/FirebirdRecoverySkill/releases) traz o `firebird-recovery.skill` (a pasta da skill em zip, gerado pelo CI). Para gerar localmente: `.\tools\Build-SkillPackage.ps1` (saída em `dist/`).
+
+### Para desenvolver
+
+```powershell
+.\tools\Install-DevLink.ps1          # ~/.claude/skills/firebird-recovery vira junction para skills/firebird-recovery
+git config core.hooksPath .githooks  # trava de termos sensíveis no commit
+```
 
 ## Estrutura
 
 ```
-skill/
+.claude-plugin/          plugin.json + marketplace.json (o repositório é plugin e marketplace)
+skills/firebird-recovery/
 ├── SKILL.md                              porta de entrada + triagem por sintoma
 ├── procedures/  (8 arquivos 01..08)      passo-a-passo por classe de corrupção
-├── scripts/     (7 .ps1 + módulo comum)  Diagnose/Repair/Salvage/Restore/TableByTable/Service/Demo
+├── scripts/     (10 .ps1 + módulo comum) diagnóstico, reparo, salvamento, restore, health check,
+│                                         troca em produção, evidências de ambiente, serviço, demo
 ├── sql/         (5 helpers)              contagens, sonda de tabelas, FK órfãs, cópia via EDS
+├── templates/   (2)                      relatório técnico e mensagem para o cliente
 ├── references/  (4 docs)                 header ODS 11.2, códigos de erro, cheatsheet, checklist
 └── evals/       (evals.json)             casos de teste com assertions
-
-dist/
-└── firebird-recovery.skill               a pasta skill/ em zip
+tools/                   empacotador, junction de desenvolvimento, trava de termos sensíveis
+.github/workflows/       CI: verificações + pacote .skill nas Releases
 ```
 
 ## Cenários cobertos
 
 | Sintoma observado | Procedure |
 |---|---|
-| Banco funciona, quero validar (health check) | **08** — 4 lentes |
+| Banco funciona, quero validar (health check) | **08** — `Test-FirebirdHealth.ps1` (4 lentes + relatório; `-SnapshotCopy` com usuários conectados) |
 | `gstat -h`: `unable to allocate memory from operating system` | **03** — header corrompido (page_size) |
 | `wrong page type`, `checksum error` em página específica | **04** — páginas corrompidas |
 | `gfix -v` com centenas de erros, mas o sistema funciona | **04** seção 2 — quase sempre cosmético |
@@ -87,7 +106,7 @@ Bugs, novos casos, ou correções são bem-vindos.
 
 1. Abra issue descrevendo o **sintoma exato** (mensagem literal do gstat/gfix/gbak).
 2. Se possível, informe qual procedure/script foi acionada e onde falhou.
-3. PRs com correções, novas procedures, ou casos de teste em `skill/evals/evals.json` são bem-vindos.
+3. PRs com correções, novas procedures, ou casos de teste em `skills/firebird-recovery/evals/evals.json` são bem-vindos.
 4. **Nunca** inclua nomes reais de clientes, sistemas, tabelas ou caminhos de produção — use nomes genéricos (`BANCO.FDB`, `PEDIDO`, `TABELA_A`). O repositório tem uma trava opcional:
 
    ```powershell
@@ -97,10 +116,11 @@ Bugs, novos casos, ou correções são bem-vindos.
 
 ## Roadmap
 
-- [ ] Health check automatizado (`Test-FirebirdHealth.ps1`: 4 lentes + diff de contagens + relatório).
+- [x] Health check automatizado (`Test-FirebirdHealth.ps1`) — v1.2.0
+- [x] Troca segura em produção (`Swap-ProductionDatabase.ps1`) e evidências de causa raiz (`Get-FirebirdEnvironmentReport.ps1`) — v1.2.0
+- [x] Distribuição como plugin/marketplace do Claude Code e CI com pacote nas Releases — v1.2.0
 - [ ] Pump automático por chave com bissecção e salto de faixas ruins (hoje: uma janela por execução).
-- [ ] Troca segura em produção (`Swap-ProductionDatabase.ps1`) e coleta de evidências de causa raiz.
-- [ ] Distribuição como plugin/marketplace do Claude Code, testes (Pester) e CI.
+- [ ] Testes automatizados (Pester), lint (PSScriptAnalyzer) e evals de gatilho (`claude plugin eval`).
 - [ ] Adaptar para Firebird 3.0+ (ODS 12/13).
 
 ## Licença

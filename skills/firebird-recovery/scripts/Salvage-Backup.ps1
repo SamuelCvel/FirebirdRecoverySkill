@@ -37,14 +37,16 @@ param(
   [Parameter(Mandatory=$true)][string]$BackupFile,
   [string]$GbakPath = 'C:\Program Files\Firebird\Firebird_2_5\bin\gbak.exe',
   [string]$IsqlPath = 'C:\Program Files\Firebird\Firebird_2_5\bin\isql.exe',
-  [string]$User     = 'SYSDBA',
-  [string]$Password = 'masterkey',
+  [string]$User     = $(if($env:ISC_USER){ $env:ISC_USER } else { 'SYSDBA' }),
+  [string]$Password = $(if($env:ISC_PASSWORD){ $env:ISC_PASSWORD } else { 'masterkey' }),
   [switch]$Force,
   [string[]]$ExtraArgs = @()
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_FirebirdCommon.ps1')
+$GbakPath = Resolve-FbToolPath 'gbak' $GbakPath
+$IsqlPath = Resolve-FbToolPath 'isql' $IsqlPath
 
 if(-not (Test-Path -LiteralPath $Database)){ Exit-FbError "Banco nao encontrado: $Database" 1 }
 if(-not (Test-Path -LiteralPath $GbakPath)){ Exit-FbError "gbak.exe nao encontrado em: $GbakPath" 1 }
@@ -60,8 +62,8 @@ foreach($f in @($BackupFile, $log)){
   }
 }
 
-$gbakArgs = @('-b','-v','-ignore','-g','-user',$User,'-password',$Password) + $ExtraArgs + @('-y', $log, $Database, $BackupFile)
-$shown    = ($gbakArgs -join ' ') -replace [regex]::Escape("-password $Password"), '-password ***'
+$gbakArgs = @('-b','-v','-ignore','-g') + $ExtraArgs + @('-y', $log, $Database, $BackupFile)
+$shown    = $gbakArgs -join ' '
 
 Write-Host ("==== Salvage-Backup  |  {0}" -f $Database) -ForegroundColor Cyan
 Write-Host ("  destino: {0}" -f $BackupFile)
@@ -70,7 +72,7 @@ Write-Host ("  args   : gbak {0}" -f $shown) -ForegroundColor DarkGray
 Write-Host "  Executando (pode levar varios minutos)..." -ForegroundColor DarkGray
 
 $sw = [Diagnostics.Stopwatch]::StartNew()
-$run = Invoke-FbNative -Exe $GbakPath -Arguments $gbakArgs
+$run = Invoke-FbNative -Exe $GbakPath -Arguments $gbakArgs -User $User -Password $Password
 $exit = $run.Exit
 $sw.Stop()
 if($run.Lines.Count -gt 0){ $run.Lines | ForEach-Object { Write-Host ("  " + $_) -ForegroundColor DarkYellow } }   # so aparece se o gbak nem abriu o log

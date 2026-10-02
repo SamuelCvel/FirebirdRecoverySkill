@@ -32,6 +32,18 @@ Confirme com `gstat -h`: `Attributes` deve mostrar só `force write` (sem `maint
 
 Cada uma cobre um tipo de problema. Sucesso só é declarado quando **todas** passam.
 
+**Automatizado:** o `Test-FirebirdHealth.ps1` roda as 4 lentes e gera `<banco>.health-<data>.md`/`.json` (exit 0 = nenhuma FALHA):
+
+```powershell
+# banco recuperado (ninguém usando): validação completa + comparação com o original
+& "<SKILL>\scripts\Test-FirebirdHealth.ps1" -Database "<RECUPERADO.FDB>" -Validation full -ReferenceDatabase "<cópia do original>"
+
+# banco em produção, com usuários conectados: cópia consistente por nbackup + validação online
+& "<SKILL>\scripts\Test-FirebirdHealth.ps1" -Database "<PRODUCAO.FDB>" -SnapshotCopy "<pasta de análise>\copia.fdb"
+```
+
+A lente 3 do script faz o backup **sem** `-ignore` (é o backup que a rotina faria); se falhar, repete com `-ignore` para dizer se os dados ainda saem. As seções abaixo explicam cada lente e servem para rodar à mão.
+
 ### Lente 1 — gstat (header)
 
 ```powershell
@@ -128,7 +140,15 @@ Antes de mexer no ambiente:
 - [ ] `Database dialect` e `Page size` do recuperado conferidos com os do original.
 - [ ] Usuários finais avisados.
 
-Execução (parar o serviço é o caminho mais seguro: garante que nenhum processo segura o arquivo):
+**Automatizado:** o `Swap-ProductionDatabase.ps1` faz as pré-checagens (dialect e page size iguais, índices ativos, candidato online, espaço), isola, confere que ninguém segura o arquivo, renomeia a produção para `<arquivo>.antigo.<data>` (nunca apaga), põe o candidato no lugar, desfaz sozinho se algo falhar no meio e confere com `gstat -h` + conexão. Mostre o plano ao usuário com `-WhatIf` antes:
+
+```powershell
+& "<SKILL>\scripts\Swap-ProductionDatabase.ps1" -Production "<PRODUCAO.FDB>" -Candidate "<RECUPERADO.FDB>" -Isolation Service -RunHealthCheck -WhatIf
+# depois do OK do usuário (Administrador; ou -Isolation Shutdown para afetar só este banco):
+& "<SKILL>\scripts\Swap-ProductionDatabase.ps1" -Production "<PRODUCAO.FDB>" -Candidate "<RECUPERADO.FDB>" -Isolation Service -RunHealthCheck -Confirm:$false
+```
+
+Execução manual (parar o serviço é o caminho mais seguro: garante que nenhum processo segura o arquivo):
 
 ```powershell
 # 1) Parar a aplicação (todas as instâncias)
@@ -171,7 +191,11 @@ Para a equipe e para futuros incidentes, registre (relatório técnico dedicado)
 4. Perdas identificadas (registros, faixas de chave, índices recriados, FK órfãs apagadas).
 5. Recomendações para evitar repetição (forced writes ligado, UPS, backup periódico com `gbak`, hardware).
 
-Use `references/checklist-pos-recuperacao.md` como ponto de partida.
+Use `references/checklist-pos-recuperacao.md` como ponto de partida e os templates:
+
+- `templates/relatorio-tecnico.md` — relatório para a equipe (com os números dos relatórios `*.health-*.md`).
+- `templates/mensagem-cliente.md` — mensagem curta para o cliente/representante, em linguagem de negócio.
+- Evidências de causa raiz: `& "<SKILL>\scripts\Get-FirebirdEnvironmentReport.ps1" -Database "<banco>"` (somente leitura: forced writes, disco, eventos de disco/NTFS, desligamentos inesperados, antivírus, `firebird.log`).
 
 ## 6. Quando NÃO declarar sucesso
 

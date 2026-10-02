@@ -1,6 +1,10 @@
 ---
 name: firebird-recovery
 description: Diagnostica e recupera bancos Firebird/InterBase 2.x (.fdb, .gdb, .ib) corrompidos ou inacessíveis e valida bancos em produção (health check). ACIONAR quando (a) o usuário pedir para recuperar/consertar/diagnosticar/validar banco Firebird; (b) sintomas como "unable to allocate memory", "wrong page type", "checksum error", "I/O error", "database shutdown", "transaction in limbo", "connection lost to database", "cannot find tip page"; (c) falha de gstat/gfix/gbak/isql; (d) suspeita de corrupção em .fdb/.gdb/.ib mesmo sem pedir a skill. Cobre header corrompido (page_size, ODS, flags), páginas com checksum/page type inválido, índices/FKs quebrando restore, salvamento tabela-a-tabela quando o gbak para (no FB 2.5, sem -skip_data, por cópia via EDS lendo pela chave), transações em limbo, sinal de parar cedo em corrupção massiva, validação em 4 lentes e troca segura em produção. Cada procedure traz passo-a-passo com fallback explícito. Use também para treinamento/demo sobre corrupção em Firebird.
+license: MIT
+compatibility: Windows com Windows PowerShell 5.1 ou PowerShell 7 e as ferramentas de linha de comando do Firebird 2.x (gstat, gfix, gbak, isql, nbackup, fbsvcmgr), verificado no Firebird 2.5.9. Validação online exige 2.5.4+.
+metadata:
+  version: "1.2.0"
 ---
 
 # Firebird Recovery (Firebird 2.5 / ODS 11.2)
@@ -35,7 +39,7 @@ Estes 5 princípios precedem qualquer comando. Quebrá-los já piorou recuperaç
 
 | Pedido | Caminho |
 |---|---|
-| "O banco funciona, quero **validar** / health check" | **08** (as 4 lentes; com usuários conectados use a validação online e a cópia por `nbackup`, procedure 02 seção 1) |
+| "O banco funciona, quero **validar** / health check" | `scripts/Test-FirebirdHealth.ps1` (4 lentes + relatório). Banco em uso: `-SnapshotCopy <cópia>` (nbackup) e validação online. Detalhes: **08** |
 | "O banco **não abre** / dá erro" | tabela de triagem abaixo |
 | Sintoma ambíguo, vários erros | **01-triagem** |
 
@@ -103,7 +107,10 @@ Scripts PowerShell (Windows PowerShell 5.1 e PowerShell 7). Cada um tem ajuda co
 
 | Script | Função | Quando chamar |
 |---|---|---|
-| `scripts/Diagnose-FirebirdHeader.ps1` | leitura RO do header + scan de page_size real + checagem de truncamento + `gstat -h` | sempre, primeiro passo de qualquer suspeita |
+| `scripts/Diagnose-FirebirdHeader.ps1` | leitura RO do header + scan de page_size real + checagem de truncamento + `gstat -h` + dicas de saúde | sempre, primeiro passo de qualquer suspeita |
+| `scripts/Test-FirebirdHealth.ps1` | **health check em 4 lentes** (estado/header, validação online ou full, backup sem `-ignore`, objetos/registros/índices/órfãs), comparação com referência, relatório `.md`/`.json`; `-SnapshotCopy` para banco em uso | health check; lentes da procedure 08; antes de trocar em produção |
+| `scripts/Swap-ProductionDatabase.ps1` | troca o banco de produção pelo recuperado: pré-checagens, isolamento (serviço ou `-shut full`), rename com data, rollback automático | procedure 08 seção 3 |
+| `scripts/Get-FirebirdEnvironmentReport.ps1` | evidências de causa raiz (somente leitura): arquitetura/versão, `firebird.conf`, banco em rede, forced writes, disco, eventos, desligamentos, Defender, `firebird.log` | relatório do incidente; recomendações |
 | `scripts/Repair-FirebirdHeader.ps1` | corrige page_size por `-PageSize`, sidecar `.hdrbak` ou scan (para se divergirem); reversível | procedure 03 |
 | `scripts/Salvage-Backup.ps1` | `gbak -b -v -ignore -g` com log, análise de erros e **tabela que quebrou** | depois do diagnóstico; lente 3 |
 | `scripts/Restore-Clean.ps1` | `gbak -c -v` com log + verificação pós-restore + aviso de banco em manutenção | depois do salvage backup |
@@ -115,7 +122,7 @@ Scripts PowerShell (Windows PowerShell 5.1 e PowerShell 7). Cada um tem ajuda co
 ### Convenções
 
 - **Parâmetros:** `-User`/`-Password` (padrão SYSDBA/masterkey) e `-GstatPath`/`-GfixPath`/`-GbakPath`/`-IsqlPath` (padrão `C:\Program Files\Firebird\Firebird_2_5\bin\`). Se a senha não for a padrão, pergunte — nunca tente adivinhar.
-- **Escrita com confirmação:** `Repair-FirebirdHeader` e `Demo` (corrupt/fix) pedem confirmação. Em execução não-interativa, **mostre o plano ao usuário** e passe `-Confirm:$false`; `-WhatIf` mostra sem gravar. `Salvage-Backup` (`-Force`) e `Restore-Clean` (`-Replace`) não sobrescrevem nada sem a chave.
+- **Escrita com confirmação:** `Repair-FirebirdHeader`, `Swap-ProductionDatabase` e `Demo` (corrupt/fix) pedem confirmação. Em execução não-interativa, **mostre o plano ao usuário** e passe `-Confirm:$false`; `-WhatIf` mostra sem gravar. `Salvage-Backup` (`-Force`) e `Restore-Clean` (`-Replace`) não sobrescrevem nada sem a chave.
 - **Windows PowerShell 5.1:** chame de dentro de uma sessão (`& "<script>" ...`). Via `powershell -File`, o `-Confirm:$false` não é convertido.
 - **Exit codes:** 0 sucesso; 1 parâmetro inválido/recusado; 2 ferramenta falhou; 3 lock/permissão/serviço; 4 nada foi feito (destino existe, `-WhatIf`, confirmação negada). O `Diagnose` tem códigos próprios (ver ajuda).
 - **Logs** ao lado do banco/backup: `<arquivo>.log`, `<destino>.restore.log`. **Sidecars**: `<banco>.hdrbak`, `<banco>.pre-repair.hdrbak`.
@@ -139,6 +146,17 @@ Scripts PowerShell (Windows PowerShell 5.1 e PowerShell 7). Cada um tem ajuda co
 | `sql/sondar-tabelas.sql` | lê **todas** as tabelas por inteiro (colunas e BLOBs) e lista as ilegíveis numa passada — conta os sítios de corrupção |
 | `sql/validar-fk-orfas.sql` | `FK\|FILHA\|PAI\|ORFAS` para todas as FKs, inclusive compostas |
 | `sql/gerar-script-salvage.sql` | gera o script que copia todos os dados da origem para um destino com o mesmo schema via EDS (CHECKs, triggers e generators tratados) |
+
+---
+
+## Templates (templates/)
+
+| Arquivo | Para quem |
+|---|---|
+| `templates/relatorio-tecnico.md` | equipe técnica: ambiente, sintoma, diagnóstico, causa, procedimento, resultado, perdas, recomendações |
+| `templates/mensagem-cliente.md` | cliente/representante (WhatsApp ou e-mail curto), em linguagem de negócio |
+
+Preencha com números dos relatórios (`Test-FirebirdHealth`, contagens, logs) — nunca com estimativa sem dizer que é estimativa. Nada de senha nem de dado sensível.
 
 ---
 
