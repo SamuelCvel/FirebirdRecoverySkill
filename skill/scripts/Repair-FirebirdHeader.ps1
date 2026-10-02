@@ -6,160 +6,136 @@
 .DESCRIPTION
   Restaura o page_size correto no offset 0x10 (USHORT little-endian) da pagina 0.
   Fonte do valor correto (nesta ordem de preferencia):
-    1) Sidecar '<Database>.hdrbak' contendo 'PAGESIZE=NNNN'.
-    2) Varredura: procura a pagina 1 (PIP) nos offsets candidatos (1024..16384)
-       identificando-a por checksum 12345 e pag_type valido.
+    1) -PageSize informado explicitamente.
+    2) Sidecar '<Database>.hdrbak' contendo 'PAGESIZE=NNNN'.
+    3) Varredura: procura a pagina 1 (PIP) ou 2 (TIP) nos offsets candidatos
+       (1024..16384), identificando-a por checksum 12345 e pag_type.
+  Se sidecar e varredura discordarem, o script PARA (informe -PageSize).
 
-  Recusa operar se o header LIDO ja parece valido (evita "consertar" o que esta bom).
-  Cria seu proprio sidecar antes de gravar, para permitir reverter.
+  Recusa operar se o header LIDO ja parece valido (evita "consertar" o que esta bom);
+  -AllowValidHeader desliga essa trava. Grava seu proprio sidecar antes de escrever,
+  para permitir reverter.
 
-  Opcoes de isolamento para evitar conflito com o servidor:
-    -Isolate     : usa gfix -shut/-online (so esse banco offline, servico segue).
+  Confirmacao: o script pede confirmacao antes de gravar. Em execucao nao-interativa
+  passe -Confirm:$false (depois de mostrar o plano ao usuario). -WhatIf mostra o que
+  faria sem gravar nada.
+
+  Com o header corrompido o servidor NAO consegue abrir o arquivo, entao normalmente
+  nao e preciso isolar nada. Se algum processo segurar o arquivo:
+    -Isolate     : gfix -shut full -force 0 / gfix -online (so esse banco).
     -StopService : para/reinicia o servico Firebird inteiro (precisa Admin).
-    (nenhuma)    : tenta abrir em modo exclusivo; aborta se o servidor mantem.
 
-.PARAMETER Database
-  Caminho completo do banco a corrigir.
-
-.PARAMETER Isolate
-  Usa gfix -shut/-online para isolar o banco.
-
-.PARAMETER StopService
-  Para/reinicia o servico Firebird (precisa Administrador).
-
-.PARAMETER Force
-  Pula confirmacao interativa.
+  Exit codes: 0 corrigido; 1 recusado (header ja valido) ou parametro invalido;
+  2 valor-alvo indeterminado/ambiguo ou gstat ainda falha; 3 arquivo ausente, em uso
+  ou sem permissao; 4 nada foi feito (-WhatIf ou confirmacao negada).
 
 .EXAMPLE
-  .\Repair-FirebirdHeader.ps1 -Database C:\path\BANCO.FDB -Isolate
+  .\Repair-FirebirdHeader.ps1 -Database C:\path\COPIA.FDB
+  .\Repair-FirebirdHeader.ps1 -Database C:\path\COPIA.FDB -WhatIf
+  .\Repair-FirebirdHeader.ps1 -Database C:\path\COPIA.FDB -Confirm:$false
 #>
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
   [Parameter(Mandatory=$true)][string]$Database,
+  [ValidateSet(0,1024,2048,4096,8192,16384)][int]$PageSize = 0,
   [string]$GstatPath = 'C:\Program Files\Firebird\Firebird_2_5\bin\gstat.exe',
   [string]$GfixPath  = 'C:\Program Files\Firebird\Firebird_2_5\bin\gfix.exe',
   [string]$User      = 'SYSDBA',
   [string]$Password  = 'masterkey',
   [switch]$Isolate,
   [switch]$StopService,
-  [switch]$Force
+  [switch]$AllowValidHeader
 )
 
 $ErrorActionPreference = 'Stop'
-$VALID     = 1024,2048,4096,8192,16384
-$GuardSvc  = 'FirebirdGuardianDefaultInstance'
-$ServerSvc = 'FirebirdServerDefaultInstance'
-$bakFile   = "$Database.hdrbak"
+. (Join-Path $PSScriptRoot '_FirebirdCommon.ps1')
 
-function Read-Bytes([string]$path,[long]$off,[int]$len){
-  $fs = [IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
-  try { [void]$fs.Seek($off,'Begin'); $b = New-Object byte[] $len; [void]$fs.Read($b,0,$len); return $b }
-  finally { $fs.Dispose() }
-}
-function Get-ClaimedPageSize([string]$path){ return [BitConverter]::ToUInt16((Read-Bytes $path 16 2),0) }
-function Find-RealPageSize([string]$path){
-  foreach($sz in $VALID){
-    try { $b = Read-Bytes $path $sz 4 } catch { continue }
-    if($b.Length -ge 4 -and $b[2] -eq 0x39 -and $b[3] -eq 0x30 -and $b[0] -ge 1 -and $b[0] -le 12){ return [int]$sz }
-  }
-  return 0
-}
-function Write-ByteExclusive([string]$path,[long]$off,[byte]$val){
-  try { $fs = [IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None) }
-  catch { throw "Nao consegui abrir o arquivo em modo EXCLUSIVO. Use -Isolate ou -StopService. Detalhe: $($_.Exception.Message)" }
-  try { [void]$fs.Seek($off,'Begin'); $fs.WriteByte($val) }
-  finally { $fs.Dispose() }
-}
-function Test-Admin {
-  $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-  return ([Security.Principal.WindowsPrincipal]$id).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
-}
-
-$script:SvcStopped = $false
-function Service-StopIfRequested {
-  if(-not $StopService){ return }
-  if(-not (Test-Admin)){ throw "-StopService exige console como Administrador." }
-  Write-Host "  Parando servico Firebird..." -ForegroundColor DarkGray
-  Stop-Service $GuardSvc -Force -ErrorAction SilentlyContinue
-  Stop-Service $ServerSvc -Force -ErrorAction SilentlyContinue
-  $script:SvcStopped = $true
-  Start-Sleep -Seconds 1
-}
-function Service-StartIfStopped {
-  if($script:SvcStopped){
-    Write-Host "  Reiniciando servico Firebird..." -ForegroundColor DarkGray
-    Start-Service $ServerSvc -ErrorAction SilentlyContinue
-    Start-Service $GuardSvc  -ErrorAction SilentlyContinue
-  }
-}
-function Db-Shutdown([string]$path){
-  Write-Host "  gfix -shut -force 0 ..." -ForegroundColor DarkGray
-  & $GfixPath -shut -force 0 -user $User -password $Password $path 2>&1 | Out-Host
-  if($LASTEXITCODE -ne 0){ throw "Falha no gfix -shut (Exit=$LASTEXITCODE)." }
-}
-function Db-Online([string]$path){
-  Write-Host "  gfix -online ..." -ForegroundColor DarkGray
-  & $GfixPath -online -user $User -password $Password $path 2>&1 | Out-Host
-  if($LASTEXITCODE -ne 0){ Write-Warning "gfix -online retornou Exit=$LASTEXITCODE." }
-}
-
-if(-not (Test-Path -LiteralPath $Database)){ Write-Error "Banco nao encontrado: $Database"; exit 3 }
+$bakFile = "$Database.hdrbak"
+if(-not (Test-Path -LiteralPath $Database)){ Exit-FbError "Banco nao encontrado: $Database" 3 }
 Write-Host ("==== Repair-FirebirdHeader  |  {0} ====" -f $Database) -ForegroundColor Cyan
 
-$claim = Get-ClaimedPageSize $Database
-$claimedValid = $VALID -contains [int]$claim
+$claim = [BitConverter]::ToUInt16((Read-FbBytes -Path $Database -Offset 16 -Count 2), 0)
+$claimedValid = $script:FbValidPageSizes -contains [int]$claim
 Write-Host ("  page_size lido atual: {0}  ({1})" -f $claim, $(if($claimedValid){'VALIDO'}else{'INVALIDO'}))
 
-if($claimedValid){
+if($claimedValid -and -not $AllowValidHeader){
   Write-Warning "O header lido parece VALIDO. Este script recusa operar sobre header bom para evitar piorar."
-  Write-Host  "  Se voce esta CERTO que precisa forcar, use a chave -Force." -ForegroundColor Yellow
-  if(-not $Force){ exit 1 }
+  Write-Host  "  Se voce esta CERTO que precisa forcar, use -AllowValidHeader." -ForegroundColor Yellow
+  exit 1
 }
 
 # Determinar valor alvo
-$target = 0
-$source = ''
+$fromBak = 0
 if(Test-Path -LiteralPath $bakFile){
   $line = Get-Content -LiteralPath $bakFile | Select-Object -First 1
-  if($line -match 'PAGESIZE=(\d+)'){ $target = [int]$Matches[1]; $source = "sidecar $bakFile" }
+  if($line -match 'PAGESIZE=(\d+)'){ $fromBak = [int]$Matches[1] }
 }
-if($target -le 0){
-  $target = Find-RealPageSize $Database
-  if($target -gt 0){ $source = 'varredura da pagina 1 (PIP)' }
-}
-if(-not ($VALID -contains $target)){
-  Write-Error "Nao consegui determinar um page_size valido para corrigir (obtido: $target). Verifique a procedure 03 secao 5."
-  exit 2
-}
-Write-Host ("  page_size alvo : {0}  (fonte: {1})" -f $target,$source) -ForegroundColor Yellow
+$fromScan = Find-FbRealPageSize -Path $Database
+Write-Host ("  sidecar .hdrbak     : {0}" -f $(if($fromBak){$fromBak}else{'(nao ha)'}))
+Write-Host ("  varredura (PIP/TIP) : {0}" -f $(if($fromScan){$fromScan}else{'(nao detectou)'}))
 
-# Confirmacao
-if(-not $Force){
-  $r = Read-Host "Aplicar correcao? (digite SIM)"
-  if($r -ne 'SIM'){ Write-Host "Cancelado."; exit 0 }
+$target = 0; $source = ''
+if($PageSize -gt 0){ $target = $PageSize; $source = 'parametro -PageSize' }
+elseif($fromBak -gt 0 -and $fromScan -gt 0 -and $fromBak -ne $fromScan){
+  Exit-FbError ("Sidecar ({0}) e varredura ({1}) discordam. Confira e informe -PageSize explicitamente." -f $fromBak, $fromScan) 2
+}
+elseif($fromBak -gt 0){ $target = $fromBak; $source = "sidecar $bakFile" }
+elseif($fromScan -gt 0){ $target = $fromScan; $source = 'varredura das paginas 1/2' }
+
+if(-not ($script:FbValidPageSizes -contains $target)){
+  Exit-FbError "Nao consegui determinar um page_size valido para corrigir (obtido: $target). Veja a procedure 03 secao 5." 2
+}
+Write-Host ("  page_size alvo : {0}  (fonte: {1})" -f $target, $source) -ForegroundColor Yellow
+
+$lo = [byte]($target -band 0xFF); $hi = [byte](($target -shr 8) -band 0xFF)
+if(-not $PSCmdlet.ShouldProcess($Database, ("gravar page_size={0} (bytes 0x{1:X2} 0x{2:X2}) no offset 0x10" -f $target, $lo, $hi))){
+  Write-Host "  Nada foi gravado." -ForegroundColor DarkGray
+  exit 4
 }
 
-# Salvar sidecar do estado atual (para reverter o reparo, se preciso)
+# Sidecar do estado atual (para reverter o reparo, se preciso)
 $preBak = "$Database.pre-repair.hdrbak"
 Set-Content -LiteralPath $preBak -Value "PAGESIZE=$claim" -Encoding ASCII
 Write-Host "  Estado pre-reparo salvo em: $preBak" -ForegroundColor DarkGray
 
-try{
-  Service-StopIfRequested
-  if($Isolate){ Db-Shutdown $Database }
-  $lo = [byte]($target -band 0xFF); $hi = [byte](($target -shr 8) -band 0xFF)
-  Write-ByteExclusive $Database 16 $lo
-  Write-ByteExclusive $Database 17 $hi
-  Write-Host ("  page_size regravado: {0} (bytes 0x{1:X2} 0x{2:X2})" -f $target,$lo,$hi) -ForegroundColor Green
-  if($Isolate){ Db-Online $Database }
-} finally { Service-StartIfStopped }
+$svcParados = @()
+try {
+  if($StopService){
+    if(-not (Test-FbAdmin)){ Exit-FbError "-StopService exige console como Administrador." 3 }
+    $svc = @(Get-FbServices | Sort-Object { if($_.PathName -match '(?i)fbguard'){0}else{1} })
+    foreach($s in $svc){ if($s.State -eq 'Running'){ Stop-Service -Name $s.Name -Force; $svcParados += $s.Name } }
+    Start-Sleep -Seconds 2
+  }
+  if($Isolate){
+    Write-Host "  gfix -shut full -force 0 ..." -ForegroundColor DarkGray
+    $r = Invoke-FbNative -Exe $GfixPath -Arguments @('-shut','full','-force','0','-user',$User,'-password',$Password,$Database)
+    if($r.Exit -ne 0){ Write-Warning ("gfix -shut nao funcionou (normal com header corrompido): {0}" -f $r.Text) }
+  }
+
+  try { $fs = [IO.File]::Open($Database, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+  catch { Exit-FbError ("Nao consegui abrir o arquivo em modo EXCLUSIVO (algum processo o segura). Procedure 02 secao 4. Detalhe: {0}" -f $_.Exception.Message) 3 }
+  try {
+    [void]$fs.Seek(16, 'Begin')
+    $fs.Write([byte[]]@($lo, $hi), 0, 2)
+    $fs.Flush()
+  } finally { $fs.Dispose() }
+  Write-Host ("  page_size regravado: {0} (bytes 0x{1:X2} 0x{2:X2})" -f $target, $lo, $hi) -ForegroundColor Green
+
+  if($Isolate){
+    $r = Invoke-FbNative -Exe $GfixPath -Arguments @('-online','-user',$User,'-password',$Password,$Database)
+    if($r.Exit -ne 0){ Write-Warning ("gfix -online retornou Exit={0}: {1}" -f $r.Exit, $r.Text) }
+  }
+} finally {
+  # religa na ordem inversa: Server antes do Guardian
+  [array]::Reverse($svcParados)
+  foreach($n in $svcParados){ Start-Service -Name $n -ErrorAction SilentlyContinue }
+}
 
 # Verificar com gstat -h
 Write-Host "  --- gstat -h ---" -ForegroundColor DarkGray
-$gout = & $GstatPath -h $Database 2>&1
-$gtext = ($gout -join "`n")
-Write-Host $gtext
-if($LASTEXITCODE -eq 0 -and $gtext -match 'Page size'){
+$g = Invoke-FbNative -Exe $GstatPath -Arguments @('-h', $Database)
+Write-Host $g.Text
+if($g.Exit -eq 0 -and $g.Text -match 'Page size'){
   Write-Host ">> CORRIGIDO com sucesso." -ForegroundColor Green
   exit 0
 } else {

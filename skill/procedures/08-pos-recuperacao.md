@@ -1,52 +1,74 @@
 # 08 — Pós-recuperação: validação 4-lentes e reintegração
 
-Esta procedure roda **depois** que o banco recuperado existe (saída de qualquer das procedures 03-07). Objetivo: provar que está consistente antes de devolver para produção, e conduzir a substituição com segurança.
+Esta procedure roda **depois** que o banco recuperado existe (saída de qualquer das procedures 03-07) — e também serve sozinha como **health check** de um banco que está funcionando. Objetivo: provar que está consistente antes de devolver para produção, e conduzir a substituição com segurança.
 
 Pulando esta procedure: já houve mais de um caso de banco "recuperado" voltar para produção e quebrar 48h depois porque uma constraint estava silenciosamente desabilitada ou faltava 0,5% dos registros. Validar é barato; replicar incidente é caro.
 
-## 0. Pré-requisito: banco NÃO pode estar em `single-user maintenance`
+> `<SKILL>` = pasta da skill (informada no SKILL.md). `$fb` = `C:\Program Files\Firebird\Firebird_2_5\bin`.
 
-Se o restore anterior parou em FK/constraint (`cannot commit index`), o banco frequentemente **fica em modo single-user maintenance** — visível em `gstat -h` como `Attributes: force write, single-user maintenance`. O `gfix -v -full` funciona nesse estado, **mas `gbak -b` e `isql` reclamam com `bad parameters on attach or create database`**.
+## Sumário
+
+0. [Pré-requisito: banco fora de manutenção](#0-pré-requisito-banco-fora-de-manutenção)
+1. [As 4 lentes](#1-as-4-lentes)
+2. [Smoke test na aplicação](#2-smoke-test-na-aplicação)
+3. [Plano de reintegração](#3-plano-de-reintegração)
+4. [Pós-deploy](#4-pós-deploy)
+5. [Documentar o incidente](#5-documentar-o-incidente)
+6. [Quando NÃO declarar sucesso](#6-quando-não-declarar-sucesso)
+
+## 0. Pré-requisito: banco fora de manutenção
+
+Um restore que termina com erro (FK, constraint) costuma deixar o banco em **`single-user maintenance`** — visível em `gstat -h` como `Attributes: force write, single-user maintenance`. Nesse estado só cabe **uma** conexão: a segunda (outro isql, o gbak da lente 3) recebe `connection lost to database` (SQLSTATE 08006); outras ferramentas reclamam `bad parameters on attach or create database`. Em `full shutdown` ninguém conecta.
 
 Antes de rodar as lentes, tire o banco desse modo:
 
 ```powershell
-& "C:\Program Files\Firebird\Firebird_2_5\bin\gfix.exe" -online -user SYSDBA -password masterkey "<RECUPERADO.FDB>"
+& "$fb\gfix.exe" -online -user SYSDBA -password <senha> "<RECUPERADO.FDB>"
 ```
 
-Confirme com `gstat -h`: `Attributes` deve mostrar só `force write` (sem `single-user maintenance` e sem `shutdown`).
+Confirme com `gstat -h`: `Attributes` deve mostrar só `force write` (sem `maintenance`, sem `shutdown`).
 
 ## 1. As 4 lentes
 
 Cada uma cobre um tipo de problema. Sucesso só é declarado quando **todas** passam.
 
-### Lente 1 — gstat (estrutura física do header)
+### Lente 1 — gstat (header)
 
 ```powershell
-& "C:\Program Files\Firebird\Firebird_2_5\bin\gstat.exe" -h "<RECUPERADO.FDB>"
+& "$fb\gstat.exe" -h "<RECUPERADO.FDB>"
 ```
 
 Esperado:
-- Page size: valor válido (1024/2048/4096/8192/16384).
-- ODS version: 11.2.
-- Flags: 0 (ou só "force write").
-- Sem "shutdown" em Attributes.
+- `Page size` válido (1024/2048/4096/8192/16384) e `ODS version 11.2`.
+- `Flags 0` — essa linha é o `pag_flags` da página 0, não o estado do banco.
+- `Attributes: force write` **presente** e sem `shutdown`/`maintenance`/`read only`/`backup lock`. Sem `force write` = forced writes desligado: ligue com `gfix -write sync` antes de produção.
+- `Database dialect` **igual ao do original** (normalmente 3).
+- `Next transaction` baixo depois de restore (o contador recomeça); no original, compare com o limite do 2.5 (2.147.483.647).
 
-### Lente 2 — gfix -v -full (consistência de páginas)
+### Lente 2 — gfix -v -full (páginas e registros)
+
+O gfix de validação exige **acesso exclusivo**: com outra conexão aberta ele falha com `secondary server attachments cannot validate databases`. No recuperado (ninguém usa ainda) basta rodar; num banco em uso, use `gfix -shut single -force 0` antes ou a validação online.
 
 ```powershell
-& "C:\Program Files\Firebird\Firebird_2_5\bin\gfix.exe" -v -full -user SYSDBA -password masterkey "<RECUPERADO.FDB>" 2>&1 | Tee-Object "<RECUPERADO>.gfix.log"
-$LASTEXITCODE   # esperado 0
+& "$fb\gfix.exe" -v -full -user SYSDBA -password <senha> "<RECUPERADO.FDB>" 2>&1 | Tee-Object "<RECUPERADO>.gfix.log"
 ```
 
-Esperado: exit 0, log vazio. Qualquer linha "Wrong page type", "Checksum", "doubly allocated" é sinal de problema persistente — volte para procedure 04.
+Esperado: **saída vazia**. O gfix devolve **exit 0 mesmo quando acha erro** (imprime `Summary of validation errors` / `Number of ... errors : N`), então olhe a saída, não o exit code. Qualquer linha é sinal de problema persistente — volte para procedure 04.
+
+Com usuários conectados (health check em produção), a validação online faz a mesma checagem por tabela sem derrubar ninguém (FB 2.5.4+):
+
+```powershell
+& "$fb\fbsvcmgr.exe" service_mgr user SYSDBA password <senha> action_validate dbname "<banco>"
+```
+
+Esperado: toda tabela `is ok` e a saída termina em `Validation finished` (também sai com exit 0 quando acha erro — procure `ERRORS found`).
 
 ### Lente 3 — gbak round-trip (dados + metadados)
 
-Rodar backup completo no recuperado é o teste mais profundo (lê todos os registros, todos os índices):
+Rodar backup completo no recuperado é o teste mais profundo (lê todos os registros, todos os BLOBs):
 
 ```powershell
-.\scripts\Salvage-Backup.ps1 -Database "<RECUPERADO.FDB>" -BackupFile "<RECUPERADO>.roundtrip.fbk"
+& "<SKILL>\scripts\Salvage-Backup.ps1" -Database "<RECUPERADO.FDB>" -BackupFile "<RECUPERADO>.roundtrip.fbk"
 ```
 
 Esperado:
@@ -54,50 +76,36 @@ Esperado:
 - Sem linhas `gbak: ERROR`.
 - Sem `gbak: warning` que mencione tabela específica (avisos genéricos são OK).
 
-Bônus: restore esse `.fbk` para um terceiro arquivo e compare os tamanhos. Se diferirem mais que 5%, suspeite (fragmentação ou perda).
+Bônus: restaure esse `.fbk` para um terceiro arquivo e compare os tamanhos. Se diferirem mais que 5%, suspeite (fragmentação ou perda).
 
-### Lente 4 — isql (contagens e amostra)
+### Lente 4 — isql (objetos, registros, órfãs)
 
-Contagens de objetos:
+> `-o` do isql **anexa** ao arquivo existente: apague as saídas antes de rodar de novo.
 
-```sql
-SET LIST ON;
-SELECT COUNT(*) AS TABELAS  FROM RDB$RELATIONS WHERE RDB$SYSTEM_FLAG=0 AND RDB$VIEW_BLR IS NULL;
-SELECT COUNT(*) AS VIEWS    FROM RDB$RELATIONS WHERE RDB$SYSTEM_FLAG=0 AND RDB$VIEW_BLR IS NOT NULL;
-SELECT COUNT(*) AS PROCS    FROM RDB$PROCEDURES;
-SELECT COUNT(*) AS GERADORES FROM RDB$GENERATORS WHERE RDB$SYSTEM_FLAG=0;
-SELECT COUNT(*) AS TRIGGERS FROM RDB$TRIGGERS WHERE RDB$SYSTEM_FLAG=0;
-SELECT COUNT(*) AS INDICES_INACTIVE FROM RDB$INDICES WHERE RDB$INDEX_INACTIVE=1 AND RDB$SYSTEM_FLAG=0;
+Objetos:
+
+```powershell
+& "$fb\isql.exe" -q -user SYSDBA -password <senha> -i "<SKILL>\sql\contagem-objetos.sql" "<RECUPERADO.FDB>"
 ```
 
-(Use `sql/contagem-objetos.sql`.)
+Esperado: `INDICES_INATIVOS = 0`, `INDICES_PENDENTES = 0`, `TRIGGERS_INATIVOS` igual ao original. Os demais números iguais aos do original (ou de um backup anterior, ou do que o usuário lembra).
 
-Comparar contra:
-- O que o usuário lembra (perguntou na procedure 01).
-- Backup anterior (se disponível) — restaure em paralelo e compare.
-- Se houver schema em git, contagens batem com `CREATE TABLE` count.
+Registros por tabela (linha `TABELA|QTD`; `-1` = tabela ilegível):
 
-Esperado: `INDICES_INACTIVE = 0`. Qualquer outro número aceito se você sabe explicar.
-
-Contagens de registros por tabela:
-
-```sql
-SET TERM ^;
-EXECUTE BLOCK RETURNS (TABELA VARCHAR(31), QTD INT) AS
-DECLARE VARIABLE R VARCHAR(31);
-BEGIN
-  FOR SELECT RDB$RELATION_NAME FROM RDB$RELATIONS
-      WHERE RDB$SYSTEM_FLAG=0 AND RDB$VIEW_BLR IS NULL
-      INTO :R DO BEGIN
-    TABELA = :R;
-    EXECUTE STATEMENT 'SELECT COUNT(*) FROM "' || :R || '"' INTO :QTD;
-    SUSPEND;
-  END
-END^
-SET TERM ;^
+```powershell
+Remove-Item "<RECUPERADO>.contagem.txt","<ORIGINAL>.contagem.txt" -ErrorAction SilentlyContinue
+& "$fb\isql.exe" -q -user SYSDBA -password <senha> -i "<SKILL>\sql\contagem-registros-por-tabela.sql" -o "<RECUPERADO>.contagem.txt" "<RECUPERADO.FDB>"
+& "$fb\isql.exe" -q -user SYSDBA -password <senha> -i "<SKILL>\sql\contagem-registros-por-tabela.sql" -o "<ORIGINAL>.contagem.txt"   "<cópia do original>"
+Compare-Object (Get-Content "<ORIGINAL>.contagem.txt") (Get-Content "<RECUPERADO>.contagem.txt")   # sem saída = iguais
 ```
 
-Salve a saída. Compare contra última cópia íntegra (backup, espelhamento, réplica) — se houver. Discrepância > 0,1% justifica conversa com o usuário antes de prosseguir.
+Discrepância > 0,1% justifica conversa com o usuário antes de prosseguir.
+
+FKs órfãs (esperado: todas as linhas terminando em `|0`):
+
+```powershell
+& "$fb\isql.exe" -q -user SYSDBA -password <senha> -i "<SKILL>\sql\validar-fk-orfas.sql" "<RECUPERADO.FDB>"
+```
 
 ## 2. Smoke test na aplicação
 
@@ -114,50 +122,56 @@ Esse passo costuma flagrar: triggers/procedures faltando, generators desincroniz
 
 Antes de mexer no ambiente:
 
-- [ ] Janela de manutenção combinada com usuário.
+- [ ] Janela de manutenção combinada com o usuário.
 - [ ] Backup do banco em produção (o que está rodando), mesmo que seja o "ruim" — você quer um ponto de retorno.
-- [ ] Conferir tamanho do recuperado vs produção; se muito menor, alertar.
-- [ ] Avisar usuários finais.
+- [ ] Tamanho do recuperado vs produção conferido; se muito menor, alertar.
+- [ ] `Database dialect` e `Page size` do recuperado conferidos com os do original.
+- [ ] Usuários finais avisados.
 
-Execução:
+Execução (parar o serviço é o caminho mais seguro: garante que nenhum processo segura o arquivo):
 
 ```powershell
 # 1) Parar a aplicação (todas as instâncias)
-# 2) Parar o serviço Firebird (ou gfix -shut no banco ativo)
-.\scripts\Firebird-Service.ps1 -Database "<PRODUCAO.FDB>" -Action shutdown
+# 2) Parar o serviço Firebird — ou, para não afetar outros bancos, isolar só este: -Action shutdown (gfix -shut full)
+& "<SKILL>\scripts\Firebird-Service.ps1" -Action stop        # requer Administrador
 
-# 3) Renomear o banco corrompido (NÃO apagar — guardar)
-Move-Item -LiteralPath "<PRODUCAO.FDB>" -Destination "<PRODUCAO.FDB>.corrompido.$(Get-Date -F yyyyMMdd-HHmmss)"
+# 3) Renomear o banco antigo (NÃO apagar — guardar)
+Move-Item -LiteralPath "<PRODUCAO.FDB>" -Destination "<PRODUCAO.FDB>.antigo.$(Get-Date -F yyyyMMdd-HHmmss)"
 
-# 4) Mover/copiar o recuperado para o nome de produção
-Copy-Item -LiteralPath "<RECUPERADO.FDB>" -Destination "<PRODUCAO.FDB>"
+# 4) Colocar o recuperado no nome de produção (Move: rápido no mesmo volume; Copy se quiser manter o recuperado)
+Move-Item -LiteralPath "<RECUPERADO.FDB>" -Destination "<PRODUCAO.FDB>"
 
-# 5) Voltar online
-.\scripts\Firebird-Service.ps1 -Database "<PRODUCAO.FDB>" -Action online
+# 5) Subir e conferir
+& "<SKILL>\scripts\Firebird-Service.ps1" -Action start
+& "$fb\gstat.exe" -h "<PRODUCAO.FDB>"     # Attributes: force write; sem shutdown
 
 # 6) Smoke test 2 — agora com a aplicação real
 # 7) Liberar usuários
 ```
 
+Se usou `-Action shutdown` em vez de parar o serviço: o banco **novo** já entra online (o shutdown era do arquivo antigo); confira com `gstat -h`.
+
+Rollback: parar de novo, renomear `<PRODUCAO.FDB>` para `<PRODUCAO.FDB>.recuperado-falhou`, voltar o `.antigo.<data>` para o nome de produção, subir.
+
 ## 4. Pós-deploy
 
 Nas primeiras 24h:
 
-- Acompanhar logs do servidor Firebird (`firebird.log` em `C:\Program Files\Firebird\Firebird_2_5\`).
+- Acompanhar o `firebird.log` (`C:\Program Files\Firebird\Firebird_2_5\firebird.log`).
 - Solicitar feedback dos usuários — uma tela que não abre é mais informativa que qualquer log.
-- Não apagar nada (corrompido original, fix.fdb, .fbk de salvage) por **pelo menos 30 dias**.
+- Não apagar nada (original, cópia de trabalho, `.fbk` de salvage) por **pelo menos 30 dias**.
 
 ## 5. Documentar o incidente
 
 Para a equipe e para futuros incidentes, registre (relatório técnico dedicado):
 
 1. Sintoma observado.
-2. Causa raiz (qual byte/página/transação).
+2. Causa raiz (qual byte/página/transação; forced writes desligado? queda de energia? disco?).
 3. Procedimento executado (procedures e ordem).
-4. Perdas identificadas (registros, índices recriados, etc.).
-5. Recomendações para evitar repetição (UPS, backup periódico, hardware).
+4. Perdas identificadas (registros, faixas de chave, índices recriados, FK órfãs apagadas).
+5. Recomendações para evitar repetição (forced writes ligado, UPS, backup periódico com `gbak`, hardware).
 
-Use o template `references/checklist-pos-recuperacao.md` como ponto de partida.
+Use `references/checklist-pos-recuperacao.md` como ponto de partida.
 
 ## 6. Quando NÃO declarar sucesso
 
@@ -166,6 +180,6 @@ Mesmo com as 4 lentes passando, recuse declarar sucesso se:
 - O usuário relata, na 1ª comparação, perda de área crítica (ex.: "faltam pedidos de ontem").
 - O gbak round-trip teve diferença > 5% no tamanho do `.fbk` vs antes.
 - Você usou `gfix -mend` e não conseguiu quantificar a perda.
-- Há discrepância de schema (tabela vista no schema do código-fonte está sumida no recuperado).
+- Há discrepância de schema (tabela vista no código-fonte está sumida no recuperado).
 
 Nesses casos, ou volte para procedure 06 (tabela-a-tabela) com foco nas áreas problemáticas, ou recomende restaurar de backup mais antigo e reentrar dados manualmente.

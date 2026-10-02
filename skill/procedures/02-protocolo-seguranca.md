@@ -18,6 +18,18 @@ Copy-Item -LiteralPath $src -Destination $work -Force
 
 **Regra:** todas as ações de escrita (patch binário, gfix -mend, gbak -b, gbak -c) operam **na cópia**, nunca no original. Só renomeie/substitua o original na etapa final, depois de tudo verificado.
 
+> **Copiar um arquivo que o servidor está usando gera cópia inconsistente** (páginas de momentos diferentes). Para um banco corrompido, isole antes (seção 3). Para um banco **em produção ativa** que você só quer validar (health check), use o nbackup — os usuários continuam trabalhando:
+>
+> ```powershell
+> $nb = "C:\Program Files\Firebird\Firebird_2_5\bin\nbackup.exe"
+> & $nb -U SYSDBA -P <senha> -L "<banco>"          # congela o arquivo; escritas vão para <banco>.delta
+> Copy-Item -LiteralPath "<banco>" -Destination "<cópia>"
+> & $nb -U SYSDBA -P <senha> -N "<banco>"          # destrava e mescla o delta — NUNCA esqueça
+> & $nb -F "<cópia>"                               # só na CÓPIA: tira o estado "backup lock"
+> ```
+>
+> Nunca rode `-F` no banco vivo. O `-L` precisa conseguir conectar, então não serve para banco com header quebrado.
+
 ### Fallback
 
 - **Disco sem espaço para a cópia:** identifique outro disco/pasta, e use-o como destino. Se não houver, ofereça compactar com 7-Zip (`7z a archive.7z arquivo`) ou usar disco externo.
@@ -64,29 +76,37 @@ Duas opções, da menos para a mais disruptiva:
 
 ```powershell
 # Tira só este banco de linha. Os outros bancos do servidor continuam atendendo.
-.\scripts\Firebird-Service.ps1 -Database "<caminho>" -Action shutdown
+& "<SKILL>\scripts\Firebird-Service.ps1" -Database "<caminho>" -Action shutdown
 ```
 
-Internamente: `gfix -shut -force 0 -user SYSDBA -password <senha> <db>`. Para devolver depois: `-Action online` (`gfix -online`).
+Internamente: `gfix -shut full -force 0`. Para devolver depois: `-Action online` (`gfix -online`).
+
+O **modo** importa (verificado no 2.5.9):
+
+| Modo | Quem ainda conecta | Use para |
+|---|---|---|
+| `-shut -force 0` **sem modo** = `multi` | SYSDBA e o dono, várias conexões | quase nada — aplicação que conecta como SYSDBA (comum em ERP) **continua entrando** |
+| `-shut single -force 0` | **uma** conexão SYSDBA/dono (a 2ª recebe `connection lost to database`) | manutenção com isql/gfix: validar, limpar órfãs |
+| `-shut full -force 0` | ninguém, nem `gfix -v` | mexer no **arquivo**: cópia, patch binário, troca |
 
 Por que essa é a preferida: produção segue no ar; pedaços de aplicação que usam outros bancos não param.
 
 **Alternativa — parar o serviço inteiro:**
 
 ```powershell
-.\scripts\Firebird-Service.ps1 -Action stop    # requer Administrador
+& "<SKILL>\scripts\Firebird-Service.ps1" -Action stop    # requer Administrador
 # ... operar no arquivo ...
-.\scripts\Firebird-Service.ps1 -Action start
+& "<SKILL>\scripts\Firebird-Service.ps1" -Action start
 ```
 
 Use somente em janela de manutenção. Para a Guardian primeiro (senão ela reinicia o server em 10s).
 
 ### 3.c) Servidor não está rodando
 
-Pode operar à vontade no arquivo. Lembre que `gfix`, `gbak` e `isql` precisam do servidor no ar para conectar — vai precisar subi-lo para essas etapas.
+Pode operar à vontade no arquivo. Lembre que `gfix`, `gbak` e `isql` precisam do servidor no ar para conectar — vai precisar subi-lo para essas etapas (o `gstat -h` não precisa).
 
 ```powershell
-.\scripts\Firebird-Service.ps1 -Action start
+& "<SKILL>\scripts\Firebird-Service.ps1" -Action start
 ```
 
 ## 4. Detecção de lock antes de gravar
@@ -111,10 +131,14 @@ Antes de seguir para a procedure específica, confirme:
 
 | Item | Comando | OK se |
 |---|---|---|
-| Espaço em disco | `Get-PSDrive C \| Select Free` | livre ≥ 3× o tamanho do banco (cópia + .fbk + restaurado) |
-| Versão do Firebird | `& "C:\Program Files\Firebird\Firebird_2_5\bin\gstat.exe" -z` | retorna 2.5.x |
-| Senha do SYSDBA | tentar `gstat` com `-user SYSDBA -password masterkey` | exit 0 (se falhar, pedir senha real ao usuário) |
+| Espaço **no volume do banco** | `[IO.DriveInfo]::new((Get-Item "<banco>").PSDrive.Root).AvailableFreeSpace` | livre ≥ 3× o tamanho do banco (cópia + .fbk + restaurado) |
+| Versão do **servidor** + senha do SYSDBA | `& "C:\Program Files\Firebird\Firebird_2_5\bin\fbsvcmgr.exe" service_mgr user SYSDBA password <senha> info_server_version` | imprime `WI-V2.5.x` (se der erro de usuário/senha, pedir a senha real) |
+| Versão das ferramentas | `& "...\gbak.exe" -z` (ou `gstat -z`) | 2.5.x — a do servidor pode ser outra |
 | Permissões na pasta | `Get-Acl "<pasta>" \| Format-List` | usuário tem Read+Write |
+
+> O `gstat -h` lê o arquivo direto e **não valida senha** — não serve para testar credencial.
+>
+> Para não espalhar a senha em comandos e logs, defina `$env:ISC_USER` / `$env:ISC_PASSWORD` no processo e omita `-user`/`-password`: gbak, gfix, isql, nbackup e fbsvcmgr usam essas variáveis (verificado no 2.5.9).
 
 ### Fallback
 

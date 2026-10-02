@@ -7,27 +7,31 @@
   em vez de abortar o script. Isso permite:
 
     - Rodar em banco degradado sem que uma tabela ruim mate o inventario.
-    - Comparar 2 bancos (original x recuperado) via diff simples de duas listas.
+    - Comparar 2 bancos (original x recuperado) com diff simples de duas listas.
     - Somar para conferir se houve perda: SUM(QTD onde QTD >= 0) em ambos.
+
+  Limite: um erro que derruba a conexao (bugcheck) interrompe o script inteiro.
+  Nesse caso use sql/sondar-tabelas.sql com o driver descrito nele.
 
   USO
   ---
   isql -q -user SYSDBA -password <senha> -i contagem-registros-por-tabela.sql -o counts.txt <banco>
+  Atencao: -o ANEXA ao arquivo existente - apague o counts.txt antes (ou use nome novo).
 
   Depois compare com o outro banco:
-    (Get-Content counts-original.txt) -eq (Get-Content counts-recuperado.txt)   # PowerShell
-    diff counts-original.txt counts-recuperado.txt                              # bash
+    Compare-Object (Get-Content counts-original.txt) (Get-Content counts-recuperado.txt)   # PowerShell (sem saida = iguais)
+    diff counts-original.txt counts-recuperado.txt                                          # bash
 */
 SET LIST OFF;
 SET HEADING OFF;
 
-SET TERM ^;
+SET TERM ^ ;
 EXECUTE BLOCK RETURNS (LINHA VARCHAR(200)) AS
 DECLARE VARIABLE R VARCHAR(31);
 DECLARE VARIABLE N BIGINT;
 BEGIN
-  FOR SELECT RDB$RELATION_NAME FROM RDB$RELATIONS
-      WHERE RDB$SYSTEM_FLAG = 0 AND RDB$VIEW_BLR IS NULL
+  FOR SELECT TRIM(RDB$RELATION_NAME) FROM RDB$RELATIONS
+      WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 AND RDB$VIEW_BLR IS NULL
       ORDER BY RDB$RELATION_NAME
       INTO :R DO BEGIN
     BEGIN
@@ -35,8 +39,8 @@ BEGIN
     WHEN ANY DO
       N = -1;
     END
-    LINHA = TRIM(:R) || '|' || CAST(:N AS VARCHAR(20));
+    LINHA = :R || '|' || CAST(:N AS VARCHAR(20));
     SUSPEND;
   END
 END^
-SET TERM ;^
+SET TERM ; ^

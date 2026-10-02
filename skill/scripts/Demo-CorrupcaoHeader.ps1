@@ -9,30 +9,38 @@
   49152 (0xC000) -- valor invalido -- e o banco deixa de abrir.
 
   Acoes:
+    setup    -> copia o banco de exemplo do Firebird (EMPLOYEE.FDB) para -Database,
+                para treinar SEM usar banco de cliente
     status   -> leitura rapida do header (page_size lido x valido) -- nao usa o servidor
     diagnose -> status + detecta o page_size REAL por varredura + roda 'gstat -h'
     corrupt  -> salva o valor original (.hdrbak) e liga o bit 0x80  (QUEBRA o banco)
     fix      -> regrava o page_size correto (reversivel) e confirma com 'gstat -h'
 
+  Script independente (nao depende dos outros scripts da skill) para poder ser
+  entregue sozinho a equipe. Funciona no Windows PowerShell 5.1 e no PowerShell 7.
+
   SERVICO FIREBIRD:
     * Ler/diagnosticar NAO exige parar o servico.
     * Escrever bytes (corrupt/fix) exige que ESTE banco nao esteja aberto pelo servidor:
-        -Isolate     => usa 'gfix -shut/-online' p/ tirar SO ESTE banco de linha (recomendado)
+        -Isolate     => 'gfix -shut full -force 0' / 'gfix -online' so neste banco (recomendado)
         -StopService => para/reinicia TODO o servico Firebird (precisa de Administrador)
         (sem nenhum) => tenta abrir em modo exclusivo; se o servidor estiver com o banco
                         aberto, AVISA e aborta sem alterar nada.
     * gfix/gbak exigem o servico NO AR.
 
+  corrupt e fix pedem confirmacao; -Force (ou -Confirm:$false) pula, -WhatIf so mostra.
+
 .EXAMPLE
-  .\Demo-CorrupcaoHeaderFirebird.ps1 -Database C:\teste\DEMO.FDB -Action status
-  .\Demo-CorrupcaoHeaderFirebird.ps1 -Database C:\teste\DEMO.FDB -Action corrupt -Isolate -Force
-  .\Demo-CorrupcaoHeaderFirebird.ps1 -Database C:\teste\DEMO.FDB -Action diagnose
-  .\Demo-CorrupcaoHeaderFirebird.ps1 -Database C:\teste\DEMO.FDB -Action fix -Isolate
+  .\Demo-CorrupcaoHeader.ps1 -Database C:\teste\DEMO.FDB -Action setup
+  .\Demo-CorrupcaoHeader.ps1 -Database C:\teste\DEMO.FDB -Action status
+  .\Demo-CorrupcaoHeader.ps1 -Database C:\teste\DEMO.FDB -Action corrupt -Isolate -Force
+  .\Demo-CorrupcaoHeader.ps1 -Database C:\teste\DEMO.FDB -Action diagnose
+  .\Demo-CorrupcaoHeader.ps1 -Database C:\teste\DEMO.FDB -Action fix -Isolate
 #>
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
   [Parameter(Mandatory=$true)][string]$Database,
-  [Parameter(Mandatory=$true)][ValidateSet('corrupt','fix','diagnose','status')][string]$Action,
+  [Parameter(Mandatory=$true)][ValidateSet('setup','corrupt','fix','diagnose','status')][string]$Action,
   [string]$GstatPath = 'C:\Program Files\Firebird\Firebird_2_5\bin\gstat.exe',
   [string]$GfixPath  = 'C:\Program Files\Firebird\Firebird_2_5\bin\gfix.exe',
   [string]$User      = 'SYSDBA',
@@ -43,53 +51,63 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if($Force){ $ConfirmPreference = 'None' }
 $VALID     = 1024,2048,4096,8192,16384
 $GuardSvc  = 'FirebirdGuardianDefaultInstance'
 $ServerSvc = 'FirebirdServerDefaultInstance'
 $bakFile   = "$Database.hdrbak"
 
 # ---------- helpers de baixo nivel ----------
+function Invoke-Exe([string]$Exe, [string[]]$Arguments){
+  # No PS 5.1, com ErrorActionPreference=Stop, stderr de um .exe vira erro terminante.
+  $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try { $lines = @(& $Exe @Arguments 2>&1 | ForEach-Object { "$_" }); $code = $LASTEXITCODE }
+  finally { $ErrorActionPreference = $prev }
+  return [pscustomobject]@{ Exit = $code; Text = ($lines -join "`n") }
+}
 function Read-Bytes([string]$path,[long]$off,[int]$len){
   $fs = [IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
-  try { [void]$fs.Seek($off,'Begin'); $b = New-Object byte[] $len; [void]$fs.Read($b,0,$len); return $b }
+  try { [void]$fs.Seek($off,'Begin'); $b = New-Object byte[] $len; [void]$fs.Read($b,0,$len); return ,$b }
   finally { $fs.Dispose() }
 }
 function Get-ClaimedPageSize([string]$path){ return [BitConverter]::ToUInt16((Read-Bytes $path 16 2),0) }
 
 function Find-RealPageSize([string]$path){
-  # Em cada limite de pagina candidato, a pagina 1 (PIP) tem checksum 12345 (0x3039)
-  # nos bytes [+2..+3] e um pag_type pequeno em [+0]. O 1o offset que casa = page_size real.
+  # A pagina 1 (PIP, pag_type 2) ou a 2 (TIP, pag_type 3) tem o checksum 12345 (0x3039)
+  # nos bytes [+2..+3]. O 1o page_size candidato em que uma delas casa = page_size real.
+  $len = (Get-Item -LiteralPath $path).Length
   foreach($sz in $VALID){
-    try { $b = Read-Bytes $path $sz 4 } catch { continue }
-    if($b.Length -ge 4 -and $b[2] -eq 0x39 -and $b[3] -eq 0x30 -and $b[0] -ge 1 -and $b[0] -le 12){ return [int]$sz }
+    foreach($pr in @(@(1,2),@(2,3))){
+      $off = [long]$sz * $pr[0]
+      if($off + 4 -gt $len){ continue }
+      $b = Read-Bytes $path $off 4
+      if($b[0] -eq $pr[1] -and $b[2] -eq 0x39 -and $b[3] -eq 0x30){ return [int]$sz }
+    }
   }
   return 0
 }
-function Write-ByteExclusive([string]$path,[long]$off,[byte]$val){
+function Write-BytesExclusive([string]$path,[long]$off,[byte[]]$vals){
   try { $fs = [IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None) }
-  catch { throw "Nao consegui abrir o arquivo em modo EXCLUSIVO. O servidor Firebird provavelmente esta com este banco ABERTO. Use -Isolate (gfix -shut) ou -StopService. Detalhe: $($_.Exception.Message)" }
-  try { [void]$fs.Seek($off,'Begin'); $fs.WriteByte($val) }
+  catch { throw "Nao consegui abrir o arquivo em modo EXCLUSIVO. O servidor Firebird provavelmente esta com este banco ABERTO. Use -Isolate (gfix -shut full) ou -StopService. Detalhe: $($_.Exception.Message)" }
+  try { [void]$fs.Seek($off,'Begin'); $fs.Write($vals,0,$vals.Length); $fs.Flush() }
   finally { $fs.Dispose() }
 }
 function Test-Admin {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   return ([Security.Principal.WindowsPrincipal]$id).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
 }
-function Invoke-Gstat([string]$path){
-  $out = & $GstatPath -h $path 2>&1
-  return [pscustomobject]@{ Exit = $LASTEXITCODE; Text = ($out -join "`n") }
-}
+function Invoke-Gstat([string]$path){ return Invoke-Exe $GstatPath @('-h', $path) }
 
 # ---------- isolar SOMENTE este banco (gfix) ----------
 function Db-Shutdown([string]$path){
-  Write-Host "  gfix -shut -force 0 (tira so este banco de linha) ..." -ForegroundColor DarkGray
-  & $GfixPath -shut -force 0 -user $User -password $Password $path 2>&1 | Out-Host
-  if($LASTEXITCODE -ne 0){ throw "Falha no gfix -shut (Exit=$LASTEXITCODE)." }
+  Write-Host "  gfix -shut full -force 0 (tira so este banco de linha) ..." -ForegroundColor DarkGray
+  $r = Invoke-Exe $GfixPath @('-shut','full','-force','0','-user',$User,'-password',$Password,$path)
+  if($r.Exit -ne 0){ throw "Falha no gfix -shut (Exit=$($r.Exit)): $($r.Text)" }
 }
 function Db-Online([string]$path){
   Write-Host "  gfix -online (devolve o banco para producao) ..." -ForegroundColor DarkGray
-  & $GfixPath -online -user $User -password $Password $path 2>&1 | Out-Host
-  if($LASTEXITCODE -ne 0){ Write-Warning "gfix -online retornou Exit=$LASTEXITCODE -- verifique manualmente." }
+  $r = Invoke-Exe $GfixPath @('-online','-user',$User,'-password',$Password,$path)
+  if($r.Exit -ne 0){ Write-Warning "gfix -online retornou Exit=$($r.Exit) -- verifique manualmente. $($r.Text)" }
 }
 
 # ---------- parar/reiniciar TODO o servico ----------
@@ -121,10 +139,23 @@ function Show-Header([string]$path){
 }
 
 # ================= pre-checks =================
-if(-not (Test-Path -LiteralPath $Database)){ throw "Banco nao encontrado: $Database" }
 Write-Host ("==== Demo corrupcao de header Firebird  |  Acao: {0}  |  {1} ====" -f $Action.ToUpper(),$Database) -ForegroundColor Cyan
+if($Action -ne 'setup' -and -not (Test-Path -LiteralPath $Database)){ throw "Banco nao encontrado: $Database (use -Action setup para criar um banco de treino)" }
 
 switch($Action){
+
+  'setup' {
+    $root = Split-Path (Split-Path $GstatPath -Parent) -Parent
+    $sample = Join-Path $root 'examples\empbuild\EMPLOYEE.FDB'
+    if(-not (Test-Path -LiteralPath $sample)){ throw "Banco de exemplo nao encontrado: $sample" }
+    if((Test-Path -LiteralPath $Database) -and -not $Force){ throw "Ja existe: $Database (use -Force para sobrescrever)" }
+    $dir = Split-Path $Database -Parent
+    if($dir -and -not (Test-Path -LiteralPath $dir)){ New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    Copy-Item -LiteralPath $sample -Destination $Database -Force
+    Remove-Item -LiteralPath $bakFile -ErrorAction SilentlyContinue
+    Write-Host "  Banco de treino criado a partir de $sample" -ForegroundColor Green
+    [void](Show-Header $Database)
+  }
 
   'status' {
     [void](Show-Header $Database)
@@ -152,11 +183,9 @@ switch($Action){
   }
 
   'corrupt' {
-    if(-not $Force){
-      Write-Warning "Isto vai QUEBRAR o banco de proposito. Use APENAS em banco de TESTE."
-      if((Read-Host "Digite SIM para continuar") -ne 'SIM'){ Write-Host "Cancelado."; break }
-    }
     if(-not (Show-Header $Database)){ Write-Warning "Header ja parece invalido. Abortando para nao mascarar o estado."; break }
+    Write-Warning "Isto vai QUEBRAR o banco de proposito. Use APENAS em banco de TESTE."
+    if(-not $PSCmdlet.ShouldProcess($Database, 'ligar o bit 0x80 do byte 0x11 (corromper page_size)')){ Write-Host "Cancelado."; break }
     $orig = Get-ClaimedPageSize $Database
     Set-Content -LiteralPath $bakFile -Value "PAGESIZE=$orig" -Encoding ASCII
     Write-Host "  Valor original salvo em: $bakFile  (PAGESIZE=$orig)" -ForegroundColor DarkGray
@@ -165,7 +194,7 @@ switch($Action){
       if($Isolate){ Db-Shutdown $Database }
       $hi    = (Read-Bytes $Database 17 1)[0]
       $newHi = [byte]($hi -bor 0x80)
-      Write-ByteExclusive $Database 17 $newHi
+      Write-BytesExclusive $Database 17 ([byte[]]@($newHi))
       Write-Host ("  Byte 0x11 alterado: 0x{0:X2} -> 0x{1:X2}  (bit 0x80 ligado)" -f $hi,$newHi) -ForegroundColor Red
     } finally { Service-StartIfStopped }
     Write-Host ("  CORROMPIDO. page_size agora: {0} (invalido). Rode '-Action diagnose'." -f (Get-ClaimedPageSize $Database)) -ForegroundColor Yellow
@@ -183,11 +212,11 @@ switch($Action){
       Write-Host "  Sem backup; page_size REAL detectado por varredura: $target" -ForegroundColor DarkGray
     }
     if(-not ($VALID -contains $target)){ throw "Nao consegui determinar um page_size valido para corrigir (obtido: $target)." }
+    if(-not $PSCmdlet.ShouldProcess($Database, "regravar page_size=$target no offset 0x10")){ Write-Host "Cancelado."; break }
     $lo = [byte]($target -band 0xFF); $hi = [byte](($target -shr 8) -band 0xFF)
     try {
       Service-StopIfRequested
-      Write-ByteExclusive $Database 16 $lo
-      Write-ByteExclusive $Database 17 $hi
+      Write-BytesExclusive $Database 16 ([byte[]]@($lo, $hi))
       Write-Host ("  page_size regravado: {0} (bytes 0x{1:X2} 0x{2:X2})" -f $target,$lo,$hi) -ForegroundColor Green
       if($Isolate){ Db-Online $Database }
     } finally { Service-StartIfStopped }

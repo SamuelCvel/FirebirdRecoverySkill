@@ -20,8 +20,10 @@ Se o usuário não souber alguma, prossiga mesmo assim — a leitura do header (
 Rode o diagnóstico **somente leitura**:
 
 ```powershell
-.\scripts\Diagnose-FirebirdHeader.ps1 -Database "<caminho>"
+& "<SKILL>\scripts\Diagnose-FirebirdHeader.ps1" -Database "<caminho>"
 ```
+
+(`<SKILL>` = pasta da skill, informada no SKILL.md.)
 
 Saída esperada (interpretação):
 
@@ -30,16 +32,19 @@ Saída esperada (interpretação):
 | `page_size: 16384` válido + gstat lê tudo | header ok, problema é em outro lugar | passo 3 (descer ao gfix) |
 | `page_size: inválido` + gstat `unable to allocate memory` | header com page_size corrompido | **procedure 03** |
 | `ODS version` lê algo absurdo (0, 65535) | header destruído / arquivo não é FB | **procedure 03** + considerar restauração por backup |
-| gstat lê mas mostra `Flags: shutdown` ou `force write off` | banco offline ou estado, não corrupção | **procedure 02** seção "estado" |
+| `ODS version` 12 ou 13 (`0x800C`/`0x800D`) | banco de **Firebird 3+**, não de 2.5 | use as ferramentas da versão certa — esta skill é para ODS 11 |
+| `Attributes` com `shutdown` / `maintenance` / `read only` / `backup lock` | estado do banco, não corrupção | **procedure 02** seção 3 (ou `gfix -online`) |
+| `Attributes` **sem** `force write` | forced writes desligado — principal causa de corrupção depois de queda de energia | anote como causa provável; seguir o diagnóstico |
+| tamanho do arquivo não é múltiplo do page_size | arquivo **truncado** (cópia interrompida, disco cheio) | **procedure 04** (o fim do arquivo vai dar `I/O error`/EOF) |
 | `I/O error` ao ler o header | disco/setor ruim | **procedure 02** (hardware) → tentar `dd` + reanalisar |
 
 ## 3. Descida ao gfix (se o header estava ok)
 
 ```powershell
-& "C:\Program Files\Firebird\Firebird_2_5\bin\gfix.exe" -v -full -user SYSDBA -password masterkey "<caminho>"
+& "C:\Program Files\Firebird\Firebird_2_5\bin\gfix.exe" -v -full -user SYSDBA -password <senha> "<caminho>"
 ```
 
-O `gfix -v -full` é seu *raio-x* das páginas. O que ele diz (em silêncio: exit 0 + nada na tela = limpo):
+O `gfix -v -full` é seu *raio-x* das páginas. Ele exige **acesso exclusivo** (com alguém conectado: `secondary server attachments cannot validate databases` — rode numa cópia, ou use a validação online do fbsvcmgr) e devolve **exit 0 mesmo quando acha erro**: limpo = exit 0 **e** nada na tela. O que ele diz:
 
 | Mensagem do gfix | Procedure |
 |---|---|
@@ -55,7 +60,7 @@ O `gfix -v -full` é seu *raio-x* das páginas. O que ele diz (em silêncio: exi
 Mesmo com gfix limpo, pode ter algo que só aparece no backup:
 
 ```powershell
-.\scripts\Salvage-Backup.ps1 -Database "<caminho>" -BackupFile "<caminho>.triagem.fbk"
+& "<SKILL>\scripts\Salvage-Backup.ps1" -Database "<caminho>" -BackupFile "<caminho>.triagem.fbk"
 ```
 
 - Sucesso ("closing file, committing, and finishing") → corrupção é muito leve ou foi resolvida; siga para **procedure 08** (verificação pós).

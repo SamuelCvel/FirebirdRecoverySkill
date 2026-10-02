@@ -4,6 +4,53 @@ Todas as mudanças notáveis a este projeto são documentadas aqui.
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.1.1] — 2026-10-02
+
+Release de **correções**. Tudo que a skill afirma sobre comandos, flags e comportamento foi **verificado no Firebird 2.5.9**: ajuda das ferramentas, código-fonte do 2.5 (`burpswi.h`, `aliceswi.h`, `ods.h`) e testes em cópias do banco de exemplo `EMPLOYEE.FDB`, inclusive com corrupção provocada (página de dados zerada, header com bit trocado, arquivo truncado, `.fbk` truncado, FK composta órfã).
+
+### Fixed — comandos que falhavam ou faziam outra coisa
+
+- **`gbak -mo` não é "só metadata"**: é `-mode read_only|read_write` (e consome o argumento seguinte). Metadata é `-m`/`-meta_data`. Corrigido no cheatsheet, nas procedures 05 e 06, na tabela de erros e no `Restore-Clean -MetadataOnly`.
+- **`gbak -l` / `-t`**: `-l` = ignora limbo (não "inclui shadows"); `-t` = transportable (não "inclui limbo"). `-r` no 2.5 é RECREATE (só sobrescreve com `-r o`).
+- **Abreviações perigosas documentadas**: no gfix 2.5, `-m` é **mend**; `-pa` no gbak é **page_size**; `-u` é `-use`. O gfix exige a ação primeiro (`-v -full`, não `-full -v`).
+- **`hdr_flags`**: `0x100` é **dialect 3** (não read-only). A procedure 03 mandava **zerar o campo de flags**, o que transformaria o banco em dialect 1 e desligaria forced writes — agora só os bits de shutdown/nbackup são limpos (snippet testado). Bits medidos: `0x2` forced writes, `0x20` no reserve, `0x80`/`0x1000`/`0x1080` shutdown multi/full/single, `0x200` read-only, `0x400` backup lock.
+- **Offsets do header** a partir de `0x3C` corrigidos (campos de 2 bytes; `hdr_end` em `0x42`, OST em `0x4C`, clumplets em `0x60`); OIT/OAT rotulados certo.
+- **`gfix -shut -force 0` sem modo é `multi`**: SYSDBA continua conectando. Scripts e procedures passam a usar `-shut full` (mexer no arquivo) ou `-shut single` (manutenção).
+- **`RDB$INDEX_INACTIVE`**: índice ativo é NULL **ou** 0; filtros passam a usar `COALESCE(...,0)` (o `= 1` perdia o estado 3; o `= 0` perdia os ativos).
+- **`GEN_ID(EVAL(...))`** não existe — trocado por `EXECUTE BLOCK` + `EXECUTE STATEMENT`.
+- **`sql/encontrar-paginas-ruins.sql` removido**: usava `MON$TABLE_STATS` (FB 3+) e não rodava no 2.5. Substituído por `sql/sondar-tabelas.sql`.
+- **`sql/validar-fk-orfas.sql` reescrito**: a versão anterior validava FK composta coluna por coluna e **não achava** órfãs reais (provado com o par `(2,20)`); agora é um `EXECUTE BLOCK` com todas as colunas e regra de NULL igual à do engine.
+- **`sql/gerar-script-salvage.sql` reescrito**: gerava `INSERT ... SELECT` entre bancos (não existe). Agora gera a cópia completa via `EXECUTE STATEMENT ... ON EXTERNAL`, tratando triggers, generators e **CHECKs** (no 2.5 não dá para desligar trigger de CHECK; o script remove e recria a constraint, como o gbak). Testado no EMPLOYEE: contagens, objetos, generators e FKs idênticos à origem.
+- **Docs que citavam o que não existia**: `-SourceDatabase`/`-ExcludeTables`/`-CountOnly`, seção "Caminho FB 2.5" (agora existe), "todos os scripts têm `-WhatIf`", "pacote assinado".
+- **"`SET TERM ;^` é inválido"** era impreciso: é válido para **sair** do modo `^`; usado para **entrar**, o isql engole os comandos seguintes **sem erro**.
+
+### Fixed — scripts
+
+- **Windows PowerShell 5.1**: com `$ErrorActionPreference='Stop'`, qualquer linha de stderr de gstat/gfix/gbak/isql virava erro terminante — o `Diagnose` morria exatamente com header corrompido e o `Salvage-Backup` exatamente quando o backup falhava. Novo `scripts/_FirebirdCommon.ps1` (`Invoke-FbNative`, `Invoke-FbIsql`); gbak passa a gravar o log com `-y`.
+- **Exit codes**: `Write-Error` + `exit N` sempre saía com 1. Agora os códigos documentados (2, 3, 4) chegam a quem chamou.
+- **Execução não-interativa**: `Read-Host` quebrava sem console e "Cancelado" saía com exit 0. `Salvage-Backup -Force`, `Restore-Clean -Replace`, `Repair`/`Demo` com `-WhatIf`/`-Confirm:$false` (o `-Force` do Repair, que também desligava a trava de header válido, virou `-AllowValidHeader`).
+- **`Salvage-Backup`**: identifica a tabela que quebrou pelos índices escritos depois do último `records written` (a versão anterior não achava; a heurística por "writing table" apontava a tabela errada); dica de `-skip_data` só para FB 3+; senha mascarada no que imprime.
+- **`Restore-Clean`**: avisa quando o restore falho deixa o destino em `single-user maintenance` (reproduzido).
+- **`Repair-FirebirdHeader`**: para se sidecar e varredura discordarem; aceita `-PageSize`; grava os 2 bytes num único open exclusivo.
+- **`Diagnose-FirebirdHeader`**: detecta arquivo **truncado** (tamanho não múltiplo do page_size, exit 4), banco de FB 3+ e forced writes desligado.
+- **`Firebird-Service`**: descobre os serviços pelo executável, `-Mode full|single|multi`, confere se start/stop funcionou.
+- **`Salvage-TableByTable`**: o modo `pump` gerava janelas `FIRST/SKIP` (o SKIP relê as linhas puladas e bate sempre na página ruim); agora copia uma janela **por chave primária** via EDS (PK simples ou composta). `list` faz o inventário numa execução só.
+- **`Demo-CorrupcaoHeader`**: `-Action setup` cria o banco de treino a partir do `EMPLOYEE.FDB` de exemplo.
+
+### Added — conhecimento verificado
+
+- Validação online (`fbsvcmgr action_validate`, 2.5.4+) com usuários conectados; `gfix -v` exige acesso exclusivo e **sai com 0 mesmo achando erro**.
+- `connection lost to database` depois de restore = banco em `single-user maintenance` recusando a 2ª conexão (a v1.1.0 atribuía a um JOIN pesado).
+- isql: `-o`/`OUTPUT` **anexam**; `-b` só funciona com `-i`.
+- Cópia consistente de banco vivo com `nbackup -L`/`-N` (+ `-F` na cópia); credenciais por `ISC_USER`/`ISC_PASSWORD`.
+- Procedure 06 reescrita: Caminho A (salvar por chave → dropar → gbak → recriar), Caminho B (copiar tudo por EDS), leitura por `RDB$DB_KEY` como último recurso.
+- Procedure 04: o padrão "todas as janelas depois de N falham" com `FIRST/SKIP` é artefato do SKIP — não prova perda grande.
+- `tools/Test-SensitiveTerms.ps1` + `.githooks/pre-commit`: bloqueia termos sensíveis (lista local em `.git/info`) inclusive dentro do `.skill`.
+
+### Security
+
+- Nomes reais de tabela num exemplo da procedure 04 trocados por nomes genéricos; histórico da 1.1.0 reescrito.
+
 ## [1.1.0] — 2026-08-27
 
 ### Added

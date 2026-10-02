@@ -22,7 +22,7 @@ Acontece quando uma transação distribuída (2-phase commit) ou uma transação
 ## 1. Listar limbos
 
 ```powershell
-& "C:\Program Files\Firebird\Firebird_2_5\bin\gfix.exe" -list -user SYSDBA -password masterkey "<banco>"
+& "C:\Program Files\Firebird\Firebird_2_5\bin\gfix.exe" -list -user SYSDBA -password <senha> "<banco>"
 ```
 
 Saída típica quando há limbos:
@@ -62,43 +62,56 @@ $gfix = "C:\Program Files\Firebird\Firebird_2_5\bin\gfix.exe"
 $db = "<banco>"
 
 # Commitar uma específica
-& $gfix -commit 123456 -user SYSDBA -password masterkey $db
+& $gfix -commit 123456 -user SYSDBA -password <senha> $db
 
 # Rolar de volta uma específica
-& $gfix -rollback 123457 -user SYSDBA -password masterkey $db
+& $gfix -rollback 123457 -user SYSDBA -password <senha> $db
 
-# Modo interativo: pergunta caso a caso (para listas grandes)
-& $gfix -prompt -user SYSDBA -password masterkey $db
+# Modo interativo: lista e pergunta caso a caso (o -prompt só vale junto com o -list)
+& $gfix -list -prompt -user SYSDBA -password <senha> $db
 ```
 
-`-prompt` faz gfix mostrar cada limbo e perguntar c/r/g (commit/rollback/skip).
+O `-list -prompt` mostra cada limbo e pergunta o que fazer com ele. Lembre que no gfix a ação vem primeiro (`-list -prompt`, não `-prompt -list`).
 
 ### Resolver todos rapidamente (com decisão tomada)
 
-Se você decidiu que TODOS os limbos vão para a mesma direção:
+Se você decidiu que TODOS os limbos vão para a mesma direção, o gfix aceita `all`:
 
 ```powershell
-# Todos rollback (mais conservador)
-$ids = & $gfix -list -user SYSDBA -password masterkey $db | Select-String 'is in limbo' | ForEach-Object {
-  ($_ -split ' ')[1]
-}
+& $gfix -rollback all -user SYSDBA -password <senha> $db      # todos rollback (mais conservador)
+# & $gfix -commit all -user SYSDBA -password <senha> $db       # todos commit
+```
+
+Ou um a um, com registro de cada decisão:
+
+```powershell
+$ids = & $gfix -list -user SYSDBA -password <senha> $db | Select-String 'Transaction\s+(\d+)' | ForEach-Object { $_.Matches[0].Groups[1].Value }
 foreach ($id in $ids) {
-  & $gfix -rollback $id -user SYSDBA -password masterkey $db
+  & $gfix -rollback $id -user SYSDBA -password <senha> $db
+  "rollback $id -> exit $LASTEXITCODE"
 }
+```
+
+### Backup sem resolver o limbo
+
+Se o objetivo imediato é só tirar um backup (antes de decidir), o gbak ignora os limbos com `-limbo`: lê a última versão commitada de cada registro.
+
+```powershell
+& "C:\Program Files\Firebird\Firebird_2_5\bin\gbak.exe" -b -v -ignore -g -limbo -user SYSDBA -password <senha> $db "<banco>.com-limbo.fbk"
 ```
 
 ## 4. Confirmar fim
 
 ```powershell
-& $gfix -list -user SYSDBA -password masterkey "<banco>"
+& $gfix -list -user SYSDBA -password <senha> "<banco>"
 # Saída vazia + exit 0 = OK
 ```
 
-E execute uma validação final:
+E execute uma validação final (o `gfix -v` exige acesso exclusivo e devolve exit 0 mesmo com erro — o que vale é a saída vazia):
 
 ```powershell
-& $gfix -v -full -user SYSDBA -password masterkey "<banco>"
-.\scripts\Salvage-Backup.ps1 -Database "<banco>" -BackupFile "<banco>.pos-limbo.fbk"
+& $gfix -v -full -user SYSDBA -password <senha> "<banco>"
+& "<SKILL>\scripts\Salvage-Backup.ps1" -Database "<banco>" -BackupFile "<banco>.pos-limbo.fbk"
 ```
 
 Se o gbak passa limpo, siga para procedure 08. Se ainda quebra, é outro problema sobreposto (página corrupta?) — volte para procedure 04.
@@ -117,5 +130,5 @@ Se o gbak passa limpo, siga para procedure 08. Se ainda quebra, é outro problem
 Não faz parte da recuperação, mas vale reportar ao usuário:
 
 - Nobreak/UPS em servidores Firebird é obrigatório.
-- Nunca copiar `.fdb` enquanto o servidor o serve. Use `gbak -b` para backup (formato `.fbk`) ou `gfix -shut` antes de copiar.
+- Nunca copiar `.fdb` enquanto o servidor o serve. Use `gbak -b` para backup (formato `.fbk`), o `nbackup -L`/`-N` (cópia física com usuários conectados — procedure 02 seção 1) ou `gfix -shut full -force 0` antes de copiar.
 - Se a aplicação usa 2PC, configurar o Transaction Manager para limpar limbos automaticamente após X minutos.

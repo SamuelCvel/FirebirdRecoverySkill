@@ -1,0 +1,10 @@
+# Hooks e scripts sh precisam de LF (com CRLF o sh do Git para Windows quebra)
+.githooks/* text eol=lf
+*.sh        text eol=lf
+
+# Binarios
+*.skill binary
+*.zip   binary
+*.fdb   binary
+*.gdb   binary
+*.fbk   binary

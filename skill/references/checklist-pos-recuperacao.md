@@ -4,12 +4,14 @@ Template para usar antes de devolver o banco recuperado para produção. Copie, 
 
 ## 1. Validação técnica (4 lentes)
 
-- [ ] `gstat -h` lê o cabeçalho completo (page_size válido, ODS 11.2, Flags 0)
-- [ ] `gfix -v -full` retorna exit 0 sem nenhuma linha de erro
+- [ ] `gstat -h` lê o cabeçalho completo (page_size válido, ODS 11.2)
+- [ ] `Attributes` mostra `force write` e **nada** de `shutdown`/`maintenance`/`read only`/`backup lock`
+- [ ] `Database dialect` igual ao do banco original (normalmente 3)
+- [ ] `gfix -v -full` sem **nenhuma** linha de saída (o exit code é 0 mesmo com erro — não basta)
 - [ ] `gbak -b -v` (round-trip) completa com "closing file, committing, and finishing"
-- [ ] `isql` conecta e roda `sql/contagem-objetos.sql` com contagens consistentes
-- [ ] Nenhum índice fica em `INDICES_INACTIVE` (ver `RDB$INDICES.RDB$INDEX_INACTIVE`)
-- [ ] Nenhuma constraint desabilitada não documentada
+- [ ] `sql/contagem-objetos.sql`: `INDICES_INATIVOS = 0`, `INDICES_PENDENTES = 0`, demais números iguais ao original
+- [ ] `sql/validar-fk-orfas.sql`: todas as FKs com `|0`
+- [ ] Nenhum trigger ou constraint desabilitado sem documentação
 
 ## 2. Comparação com referência
 
@@ -54,12 +56,13 @@ Template para usar antes de devolver o banco recuperado para produção. Copie, 
 
 ## 7. Retenção de artefatos (≥ 30 dias)
 
-- [ ] Original corrompido `<nome>.FDB`
-- [ ] Cópia de trabalho `<nome>_fix.fdb`
-- [ ] Backup de salvamento `<nome>_salv.fbk`
-- [ ] Recuperado restaurado `<nome>_RECUPERADO.FDB`
-- [ ] Logs (gbak_backup, gbak_restore, gfix)
-- [ ] Relatório técnico do incidente (.docx)
+- [ ] Original (renomeado `<nome>.antigo.<data>`, nunca apagado)
+- [ ] Cópia de trabalho (`<nome>.work.fdb`) e sidecars (`.hdrbak`, `.pre-repair.hdrbak`, `.flagsbak`)
+- [ ] Backup de salvamento `<nome>.salvage.fbk` e o `.fbk` do round-trip
+- [ ] Recuperado restaurado `<nome>_RECUPERADO.FDB` (se não virou produção)
+- [ ] Logs (`*.fbk.log`, `*.restore.log`, `*.gfix.log`, contagens, sonda, órfãs)
+- [ ] Dump forense de linhas apagadas (órfãs/duplicatas), se houve limpeza
+- [ ] Relatório técnico do incidente
 
 ## 8. Documentação do incidente
 

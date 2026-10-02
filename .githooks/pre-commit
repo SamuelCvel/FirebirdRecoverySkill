@@ -1,0 +1,7 @@
+#!/bin/sh
+# Bloqueia o commit se algum arquivo do stage tiver termo sensivel.
+# Lista local de termos: .git/info/sensitive-terms.txt (nunca vai para o commit).
+# Ativar: git config core.hooksPath .githooks
+ROOT="$(git rev-parse --show-toplevel)"
+if command -v pwsh >/dev/null 2>&1; then PS=pwsh; else PS=powershell.exe; fi
+exec "$PS" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$ROOT/tools/Test-SensitiveTerms.ps1" -Staged
