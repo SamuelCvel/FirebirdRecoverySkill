@@ -247,9 +247,10 @@ Cópia física consistente de banco **em uso**, sem parar o serviço:
 - Roda **com usuários conectados**. Leituras da tabela em validação seguem; escritas nela esperam até `val_lock_timeout` (padrão 10 s; 0 = não espera; −1 = espera sempre). Tabela que não consegue o lock é pulada.
 - Faz, por tabela de usuário, a mesma checagem do `gfix -v -full` (páginas, registros e índices daquela tabela).
 - **Não** checa: tabelas de sistema, header, PIP, TIP, generators, páginas compartilhadas entre tabelas, nem libera órfãs. Não conserta nada.
-- Padrões são `SIMILAR TO`, **case-sensitive**, separados por `|` sem espaço.
+- Padrões são `SIMILAR TO`, **case-sensitive**, separados por `|` sem espaço. `_` e `%` são curingas: nome com `_` vai como `[_]` (`TABELA[_]A`).
 - Saída no stdout, por tabela: `Relation N (TABELA) is ok` ou `Relation N (TABELA) : N ERRORS found`, terminando em `Validation finished`. Erros também vão para o `firebird.log`.
-- Ótima para **achar todas as tabelas ruins numa passada só**, sem janela de manutenção.
+- **Página 100% zerada aborta tudo** (checksum 0): exit 1, `database file appears corrupt () / bad checksum / checksum error on database page N` no fim, e as tabelas seguintes ficam sem validar. O fim da saída se perde, então a última `Relation` do log pode ser anterior à culpada. Ache a tabela pelo número da página nas pointer pages (`RDB$PAGES`, tipo 4: `ppg_count` em `0x18`, `ppg_relation` em `0x1A`, lista de páginas em `0x20`) e revalide com `val_tab_excl`. Página com lixo mas checksum `12345` não aborta: sai `Page N wrong type ...` e `ERRORS found`.
+- Boa para **achar todas as tabelas ruins**, sem janela de manutenção — contando com os abortos acima (o `Test-FirebirdHealth.ps1` repete a validação excluindo cada tabela que abortou).
 
 ## Credenciais sem expor senha
 
@@ -264,7 +265,7 @@ Todos retornam 0 = sucesso, ≠ 0 = falha. Mas a "falha" pode ser parcial:
 - **gbak**: exit 0 com warnings no log ainda é sucesso. `gbak: ERROR` + exit ≠ 0 = falha real. Backup ok termina com `closing file, committing, and finishing`; restore ok, com `finishing, closing, and going home`. A tabela que quebrou é a da **última** linha `writing table X` / `writing data for table X` antes do primeiro `ERROR` (o erro pode vir antes do "writing data").
 - **gfix -v**: **retorna exit 0 mesmo quando acha erros** (imprime `Summary of validation errors` / `Number of ... errors : N`). Limpo = exit 0 **e** saída vazia.
 - **gstat**: exit 0 + saída lida = ok.
-- **fbsvcmgr action_validate**: **exit 0 mesmo com erros** — leia as linhas `ERRORS found` (e as de página, ex.: `Page 245 wrong type (expected 5 encountered 0)`) e confira que a saída termina em `Validation finished`.
+- **fbsvcmgr action_validate**: **exit 0 mesmo com erros** — leia as linhas `ERRORS found` (e as de página, ex.: `Page 245 wrong type (expected 5 encountered 0)`). Exit 1 ou qualquer linha depois de `Validation finished` = a validação **abortou** (página zerada) e não cobriu o banco todo.
 
 ## Caminhos padrão
 

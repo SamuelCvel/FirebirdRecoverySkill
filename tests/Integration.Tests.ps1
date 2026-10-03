@@ -105,7 +105,8 @@ Test-Case 'Fixtures: copias do EMPLOYEE (header, truncado, forced writes, pagina
   $script:corr  = New-EmpCopy 'EMP_CORR.FDB'
   $pages = Get-DataPages $corr (Get-RelationId $emp 'SALES')
   Assert-True ($pages.Count -gt 0) 'paginas de dados da SALES'
-  Clear-Pages $corr ([long[]]@($pages.Values))
+  $script:salesPages = [long[]]@($pages.Values)
+  Clear-Pages $corr $salesPages
   $script:notDb = ItPath 'nao-e-banco.fdb'
   [IO.File]::WriteAllText($notDb, 'isto nao e um banco Firebird')
   $script:okFbk = ItPath 'emp-ok.fbk'
@@ -322,7 +323,18 @@ Test-Case 'Test-FirebirdHealth: banco saudavel fica verde e gera .md/.json' {
   $j = Get-ChildItem -LiteralPath $it -Filter 'EMP_HEALTH.FDB.health-*.json' | Select-Object -First 1
   Assert-True ($null -ne $j -and $null -ne ((Get-Content -LiteralPath $j.FullName -Raw) | ConvertFrom-Json)) 'relatorio .json valido'
 }
-Test-Case 'Test-FirebirdHealth: pagina zerada da FALHA' { Assert-Run (Invoke-Script "$sk\Test-FirebirdHealth.ps1" @('-Database', $corr, '-OutDir', $it)) 2 'SALES' }
+Test-Case 'Find-FbPageOwner: pagina zerada aponta para a tabela dona' {
+  $donos = Find-FbPageOwner -IsqlPath $isql -Database $corr -Pages ([long[]]@($salesPages) + 999999) -User $fbUser -Password $fbPass
+  foreach($p in $salesPages){ Assert-Equal 'SALES' $donos[$p] "pagina $p" }
+  Assert-True (-not $donos.ContainsKey([long]999999)) 'pagina que nao e de dados fica de fora'
+}
+Test-Case 'Test-FirebirdHealth: pagina zerada da FALHA na validacao e revalida o resto' {
+  # a validacao online aborta na pagina ruim (e o log para ANTES da SALES); o script tem que achar a
+  # tabela pelo numero da pagina, revalidar sem ela e nunca dizer OK
+  $r = Invoke-Script "$sk\Test-FirebirdHealth.ps1" @('-Database', $corr, '-OutDir', $it)
+  Assert-Run $r 2 'validacao\s+online: pagina ilegivel abortou a validacao em: SALES \(pagina \d+'
+  Assert-Match $r.Text 'Revalidado sem ela\(s\): \d+ tabela\(s\) ok' 'revalidacao do resto'
+}
 Test-Case 'Test-FirebirdHealth: orfa de FK e indices inativos dao FALHA' { Assert-Run (Invoke-Script "$sk\Test-FirebirdHealth.ps1" @('-Database', $fkInactive, '-OutDir', $it, '-SkipBackup')) 2 'FK' }
 Test-Case 'Swap-ProductionDatabase: -WhatIf nao mexe em nada' {
   $script:prod = New-EmpCopy 'PROD.FDB'

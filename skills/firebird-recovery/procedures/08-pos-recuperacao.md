@@ -73,7 +73,10 @@ Com usuários conectados (health check em produção), a validação online faz 
 & "$fb\fbsvcmgr.exe" service_mgr user SYSDBA password <senha> action_validate dbname "<banco>"
 ```
 
-Esperado: toda tabela `is ok` e a saída termina em `Validation finished` (também sai com exit 0 quando acha erro — procure `ERRORS found`).
+Esperado: **toda** tabela `is ok`, a saída termina em `Validation finished` **e não há nenhuma linha depois dele**. Dois jeitos de falhar:
+
+- `Relation N (TABELA) : N ERRORS found` — sai com exit 0; procure a linha.
+- **Página 100% zerada aborta a validação** (exit 1): depois do `Validation finished` (ou no lugar dele) vem `database file appears corrupt () / checksum error on database page N`, e as tabelas seguintes não foram validadas. A última tabela do log pode não ser a culpada. O `Test-FirebirdHealth.ps1` acha a tabela pelo número da página e revalida o resto sem ela; na mão, veja a procedure 04 seção 1.a.
 
 ### Lente 3 — gbak round-trip (dados + metadados)
 

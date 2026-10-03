@@ -92,7 +92,8 @@ Use Ctrl+F para localizar a mensagem que você está vendo. Linhas marcadas com 
 |---|---|---|
 | `Relation N (TABELA) is ok` | tabela e seus índices sem erro | — |
 | `Relation N (TABELA) : N ERRORS found` | tabela com páginas/registros/índices ruins (detalhes no `firebird.log`) | **04**; se gbak para nela, **06** |
-| `Validation finished` | fim normal; se não aparecer, a validação abortou | ver stderr |
+| `Validation finished` | fim normal **só se nada vier depois** e o exit for 0 | — |
+| `checksum error on database page N` depois de (ou sem) `Validation finished`, exit 1 | página **100% zerada** abortou a validação; as tabelas seguintes não foram validadas e a última do log pode não ser a culpada | **04** seção 1.a (achar a tabela pela página, revalidar sem ela) |
 
 ## Mensagens no firebird.log (servidor)
 

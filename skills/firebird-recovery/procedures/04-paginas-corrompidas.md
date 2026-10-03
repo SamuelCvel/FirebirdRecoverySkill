@@ -41,7 +41,34 @@ Remove-Item "<cópia>.sonda.txt" -ErrorAction SilentlyContinue
 & "C:\Program Files\Firebird\Firebird_2_5\bin\fbsvcmgr.exe" service_mgr user SYSDBA password <senha> action_validate dbname "<cópia>"
 ```
 
-Exemplo real da validação online numa página de dados zerada: `Page 245 wrong type (expected 5 encountered 0)` e `Relation 138 (SALES) : 1 ERRORS found`. Conte os **sítios independentes** — 3 ou mais é sinal de parar (seção 5b).
+A validação online se comporta de dois jeitos (verificado no 2.5.9):
+
+| Página ruim | Saída | O que fazer |
+|---|---|---|
+| lixo, mas com o checksum `12345` no lugar | `Page 245 wrong type (expected 5 encountered 0)` e `Relation 138 (SALES) : 3 ERRORS found`; a validação **continua**, exit 0 | anote a tabela e siga |
+| **100% zerada** (checksum 0 — página que nunca foi gravada) | `database file appears corrupt () / bad checksum / checksum error on database page N`; a validação **aborta**, exit 1, e as tabelas seguintes **ficam sem validar** | ache a tabela pela página e revalide sem ela (abaixo) |
+
+No aborto, o fim da saída se perde: a última `Relation` do log pode ser **anterior** à tabela culpada. A tabela certa sai do número da página: ele está na lista de páginas da pointer page da tabela (`RDB$PAGES`, tipo 4), mesmo com a página zerada. Depois revalide excluindo a tabela (`val_tab_excl`, padrão SIMILAR TO: `_` é curinga, escreva `[_]`) até a validação terminar. O `Test-FirebirdHealth.ps1` faz isso sozinho (`Find-FbPageOwner` no módulo comum) e lista todas as tabelas com página ilegível.
+
+```powershell
+& "C:\Program Files\Firebird\Firebird_2_5\bin\fbsvcmgr.exe" service_mgr user SYSDBA password <senha> action_validate dbname "<cópia>" val_tab_excl "TABELA[_]RUIM"
+```
+
+Conte os **sítios independentes** — 3 ou mais é sinal de parar (seção 5b).
+
+### 1.a.1 Página zerada ou lixo? (pista da causa)
+
+Olhe o conteúdo bruto da página do erro — leitura pura, com o servidor no ar:
+
+```powershell
+. "<SKILL>\scripts\_FirebirdCommon.ps1"
+$ps = 4096   # page size do gstat -h
+$b = Read-FbBytes -Path "<cópia>" -Offset (1234567L * $ps) -Count $ps    # 1234567 = página do erro
+"tipo {0}, bytes nao-zero {1} de {2}" -f $b[0], @($b | Where-Object { $_ -ne 0 }).Count, $ps
+```
+
+- **Tudo zero** = página que a tabela já usava mas cujo conteúdo **nunca chegou ao arquivo**. Padrão de **cópia do arquivo feita com o banco em uso** (a cópia pega a pointer page já gravada e a página de dados ainda não), ou de queda de energia com cache de escrita do disco ligado. Costuma ser a(s) página(s) mais nova(s) da tabela. Se o arquivo veio de uma cópia com o sistema aberto, **o banco de produção pode estar íntegro** — confirme lá (`gbak -b`, ou `Test-FirebirdHealth -SnapshotCopy`) antes de recuperar a cópia.
+- **Lixo** (bytes aleatórios, ou conteúdo de outro tipo de página) = escrita errada: disco, controladora, memória ou software escrevendo no arquivo (antivírus, backup). Investigue o hardware (seção 5).
 
 ### 1.b Visão estrutural com gfix -v -full
 

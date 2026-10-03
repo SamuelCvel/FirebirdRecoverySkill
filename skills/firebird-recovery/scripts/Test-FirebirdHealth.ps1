@@ -138,14 +138,41 @@ if($modo -eq 'online' -and $podeConectar){
 }
 if(-not $podeConectar -and $modo -ne 'none'){ Add-Check 'validacao' $modo 'PULADO' 'banco nao esta acessivel (lente 0)' }
 elseif($modo -eq 'online'){
-  $v = Invoke-FbNative -Exe $FbsvcmgrPath -Arguments @('service_mgr', 'action_validate', 'dbname', $target) -User $User -Password $Password
-  [IO.File]::WriteAllText("$base.validacao.log", $v.Text)
-  $ruins = @($v.Lines | Select-String -Pattern 'Relation \d+ \((.+?)\) : (\d+) ERRORS found' | ForEach-Object { '{0} ({1} erros)' -f $_.Matches[0].Groups[1].Value, $_.Matches[0].Groups[2].Value })
-  $ok = @($v.Lines | Select-String -Pattern 'is ok').Count
-  $terminou = $v.Text -match 'Validation finished'
-  if($ruins.Count -gt 0){ Add-Check 'validacao' 'online' 'FALHA' ("tabelas com erro: {0}" -f ($ruins -join ', ')); $details['Tabelas com erro na validacao online'] = $ruins }
-  elseif(-not $terminou){ Add-Check 'validacao' 'online' 'FALHA' ("validacao nao terminou: {0}" -f (($v.Lines | Select-Object -Last 3) -join ' ')) }
-  else { Add-Check 'validacao' 'online' 'OK' ("{0} tabela(s) ok" -f $ok) }
+  # Pagina ilegivel ABORTA a validacao online e as tabelas seguintes ficam sem validar. A tabela da pagina
+  # vem do numero da pagina no erro (Find-FbPageOwner); revalida sem ela, ate terminar (no maximo 10 rodadas).
+  $excluir = New-Object System.Collections.Generic.List[string]
+  $abortos = New-Object System.Collections.Generic.List[string]
+  $logVal  = New-Object System.Text.StringBuilder
+  $p = $null; $semDono = $false
+  for($rodada = 1; $rodada -le 10; $rodada++){
+    $valArgs = @('service_mgr', 'action_validate', 'dbname', $target)
+    if($excluir.Count){ $valArgs += @('val_tab_excl', (($excluir | ForEach-Object { ConvertTo-FbSimilarLiteral $_ }) -join '|')) }
+    $v = Invoke-FbNative -Exe $FbsvcmgrPath -Arguments $valArgs -User $User -Password $Password
+    [void]$logVal.AppendLine(("==== rodada {0}{1}" -f $rodada, $(if($excluir.Count){ ' (sem: ' + ($excluir -join ', ') + ')' } else { '' })))
+    [void]$logVal.AppendLine($v.Text)
+    $p = ConvertFrom-FbOnlineValidation -Lines $v.Lines -Exit $v.Exit
+    if(-not $p.Aborted){ break }
+    $donos = Find-FbPageOwner -IsqlPath $IsqlPath -Database $target -Pages $p.BadPages -User $User -Password $Password
+    $novas = @($donos.Values | Select-Object -Unique | Where-Object { $excluir -notcontains $_ })
+    if($novas.Count -eq 0){ $semDono = $true; break }
+    foreach($t in $novas){
+      $pgs = (@($donos.Keys | Where-Object { $donos[$_] -eq $t }) | Sort-Object) -join ', '
+      $abortos.Add(("{0} (pagina {1}: {2})" -f $t, $pgs, $p.ErrorText))
+      $excluir.Add($t)
+    }
+  }
+  [IO.File]::WriteAllText("$base.validacao.log", $logVal.ToString())
+  if($abortos.Count){ $details['Tabelas com pagina ilegivel (abortaram a validacao online)'] = @($abortos) }
+  if($p.TablesWithErrors.Count){ $details['Tabelas com erro na validacao online'] = @($p.TablesWithErrors) }
+  if($semDono){
+    Add-Check 'validacao' 'online' 'FALHA' ("validacao abortou sem eu identificar a tabela (ultima no log: {0}; erro: {1}){2} - rode gfix -v -full numa copia" -f $(if($p.LastRelation){ $p.LastRelation } else { '?' }), $p.ErrorText, $(if($abortos.Count){ '; ja identificadas: ' + ($excluir -join ', ') } else { '' }))
+  } elseif($p.Aborted){
+    Add-Check 'validacao' 'online' 'FALHA' ("validacao abortou em {0} tabelas e parei ({1}) - corrupcao extensa, procedure 04 secao 5b" -f $excluir.Count, ($excluir -join ', '))
+  } else {
+    if($abortos.Count){ Add-Check 'validacao' 'online' 'FALHA' ("pagina ilegivel abortou a validacao em: {0}. Revalidado sem ela(s): {1} tabela(s) ok" -f ($abortos -join '; '), $p.TablesOk) }
+    if($p.TablesWithErrors.Count){ Add-Check 'validacao' 'online' 'FALHA' ("tabelas com erro: {0}" -f ($p.TablesWithErrors -join ', ')) }
+    if(-not $abortos.Count -and -not $p.TablesWithErrors.Count){ Add-Check 'validacao' 'online' 'OK' ("{0} tabela(s) ok" -f $p.TablesOk) }
+  }
 }
 elseif($modo -eq 'full'){
   $v = Invoke-FbNative -Exe $GfixPath -Arguments @('-v', '-full', $target) -User $User -Password $Password

@@ -4,6 +4,25 @@ Todas as mudanças notáveis a este projeto são documentadas aqui.
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versionamento segue [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.3.1] — 2026-10-02
+
+Correção encontrada num health check real (banco de 4,5 GB com 2 páginas de dados zeradas).
+
+### Fixed
+
+- **`Test-FirebirdHealth` dava a validação online como OK quando ela abortava.** Página **100% zerada** (checksum 0, página que nunca chegou ao arquivo) faz o `fbsvcmgr action_validate` abortar com `checksum error on database page N` (exit 1) e deixar as tabelas seguintes **sem validar**; o script só procurava `ERRORS found` e relatava "N tabela(s) ok". Agora o aborto é FALHA, a tabela é identificada pelo **número da página** e a validação é repetida sem ela até terminar (até 10 rodadas), listando todas as tabelas com página ilegível. A tabela não sai do texto: no aborto o fim da saída se perde e a última tabela do log pode ser anterior à culpada (reproduzido no `EMPLOYEE.FDB`).
+
+### Added
+
+- `_FirebirdCommon`: `ConvertFrom-FbOnlineValidation` (interpreta a saída da validação online, inclusive o aborto), `Find-FbPageOwner` (diz de que tabela é uma página de dados pelas pointer pages em `RDB$PAGES` — funciona com a página zerada) e `ConvertTo-FbSimilarLiteral` (nome de tabela para `val_tab_excl`, onde `_` é curinga).
+- Testes: 4 unitários (formatos de saída da validação, escape do SIMILAR TO) e 1 de integração (dono da página zerada); o teste do health check agora confere a própria lente de validação.
+
+### Docs
+
+- Procedure 04: os dois comportamentos da validação online (lixo com checksum = `ERRORS found` e segue; página zerada = aborta), como achar a tabela pela página e revalidar com `val_tab_excl`; **página zerada x lixo** como pista da causa (zerada = conteúdo que nunca chegou ao arquivo, típico de cópia feita com o banco em uso — a produção pode estar íntegra).
+- Procedure 06: a faixa pulada pelo `-Auto` é um intervalo; para a lista exata de registros perdidos, sondar cada chave com `WHERE PK = k`.
+- Procedure 08, cheatsheet e tabela de erros: `Validation finished` só vale com exit 0 e nada depois.
+
 ## [1.3.0] — 2026-10-02
 
 ### Added

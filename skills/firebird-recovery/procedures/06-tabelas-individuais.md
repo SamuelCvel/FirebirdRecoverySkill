@@ -110,7 +110,7 @@ Use quando poucas tabelas impedem o backup. `T` = tabela problemática.
 
 - Copia janelas de 5000 linhas pela PK; janela que falha encolhe (500 → 50 → 5 → 1); quando nem 1 linha sai, **pula** a região ruim (busca exponencial + bissecção na última coluna da PK, direto na origem) e segue.
 - PK composta: decompõe `(A,B) > (a,b)` em faixas que o índice posiciona (`A=a AND B>b`, depois `A>a`); com 2 colunas numéricas, atravessa também o começo ilegível do próximo prefixo.
-- Faixas perdidas vão para `<destino>.pump.<TABELA>.csv` (vão para o relatório).
+- Faixas perdidas vão para `<destino>.pump.<TABELA>.csv` (vão para o relatório). A faixa é o **intervalo** pulado (`de 3028 até 3033`), não a lista de registros: muitas chaves dele podem nem existir. Para dizer exatamente **quais** registros se perderam, sonde cada chave do intervalo pelo índice — `SELECT PK FROM T WHERE PK = k`: sem linha = a chave não existe; erro de página = registro perdido. Num caso real, uma faixa de 5 chaves tinha **1** registro perdido.
 - **Só pula** erro de página danificada. Erro de SQL, login, permissão ou constraint no destino **para tudo** (não descarta dado bom).
 - **Limite:** se a última coluna da PK não é numérica (ex.: código texto), o `-Auto` para na região ruim e diz a última chave copiada. Retome com `-StartKey` depois da região (ex.: `-StartKey 'C000250'`) e `-Auto` de novo. Sem PK: seção 3.c.
 

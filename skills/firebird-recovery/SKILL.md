@@ -4,7 +4,7 @@ description: Diagnostica e recupera bancos Firebird/InterBase 2.x (.fdb, .gdb, .
 license: MIT
 compatibility: Windows com Windows PowerShell 5.1 ou PowerShell 7 e as ferramentas de linha de comando do Firebird 2.x (gstat, gfix, gbak, isql, nbackup, fbsvcmgr), verificado no Firebird 2.5.9. Validação online exige 2.5.4+.
 metadata:
-  version: "1.3.0"
+  version: "1.3.1"
 ---
 
 # Firebird Recovery (Firebird 2.5 / ODS 11.2)
@@ -108,7 +108,7 @@ Scripts PowerShell (Windows PowerShell 5.1 e PowerShell 7). Cada um tem ajuda co
 | Script | Função | Quando chamar |
 |---|---|---|
 | `scripts/Diagnose-FirebirdHeader.ps1` | leitura RO do header + scan de page_size real + checagem de truncamento + `gstat -h` + dicas de saúde | sempre, primeiro passo de qualquer suspeita |
-| `scripts/Test-FirebirdHealth.ps1` | **health check em 4 lentes** (estado/header, validação online ou full, backup sem `-ignore`, objetos/registros/índices/órfãs), comparação com referência, relatório `.md`/`.json`; `-SnapshotCopy` para banco em uso | health check; lentes da procedure 08; antes de trocar em produção |
+| `scripts/Test-FirebirdHealth.ps1` | **health check em 4 lentes** (estado/header, validação online ou full, backup sem `-ignore`, objetos/registros/índices/órfãs), comparação com referência, relatório `.md`/`.json`; `-SnapshotCopy` para banco em uso. Se uma página zerada **abortar** a validação online, acha a tabela pelo número da página e revalida o resto sem ela | health check; lentes da procedure 08; antes de trocar em produção |
 | `scripts/Swap-ProductionDatabase.ps1` | troca o banco de produção pelo recuperado: pré-checagens, isolamento (serviço ou `-shut full`), rename com data, rollback automático | procedure 08 seção 3 |
 | `scripts/Get-FirebirdEnvironmentReport.ps1` | evidências de causa raiz (somente leitura): arquitetura/versão, `firebird.conf`, banco em rede, forced writes, disco, eventos, desligamentos, Defender, `firebird.log` | relatório do incidente; recomendações |
 | `scripts/Repair-FirebirdHeader.ps1` | corrige page_size por `-PageSize`, sidecar `.hdrbak` ou scan (para se divergirem); reversível | procedure 03 |

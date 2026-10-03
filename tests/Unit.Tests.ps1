@@ -139,6 +139,43 @@ Test-Case 'Get-FbErrorSummary tira o ruido do isql e do EDS' {
   Assert-Equal 'a | b' (Get-FbErrorSummary @('a', '', 'b') -Max 3) 'sem cabecalho: ultimas linhas'
 }
 
+Write-Host "== Unit: validacao online (fbsvcmgr) ==" -ForegroundColor Cyan
+$valOk = @('10:00:00.01 Validation started', '', '10:00:00.02 Relation 128 (TABELA_A)', '10:00:00.02   process pointer page    0 of    1',
+           '10:00:00.02 Index 1 (PK_TABELA_A)', '10:00:00.03 Relation 128 (TABELA_A) is ok', '',
+           '10:00:00.03 Relation 129 (TABELA_B)', '10:00:00.04 Relation 129 (TABELA_B) is ok', '', '10:00:00.05 Validation finished')
+Test-Case 'ConvertFrom-FbOnlineValidation: validacao limpa' {
+  $p = ConvertFrom-FbOnlineValidation -Lines $valOk -Exit 0
+  Assert-True (-not $p.Aborted) 'nao abortou'
+  Assert-Equal 2 $p.TablesOk 'tabelas ok'
+  Assert-Equal 0 $p.TablesWithErrors.Count 'sem erros'
+}
+Test-Case 'ConvertFrom-FbOnlineValidation: tabela com ERRORS found' {
+  $l = $valOk[0..6] + @('10:00:00.03 Relation 129 (TABELA_B)', '10:00:00.04 Relation 129 (TABELA_B) : 3 ERRORS found', '', '10:00:00.05 Validation finished')
+  $p = ConvertFrom-FbOnlineValidation -Lines $l -Exit 0
+  Assert-True (-not $p.Aborted) 'erro de registro nao aborta'
+  Assert-Equal 'TABELA_B (3 erros)' ($p.TablesWithErrors -join ';') 'tabela com erro'
+}
+Test-Case 'ConvertFrom-FbOnlineValidation: pagina ilegivel aborta (com e sem Validation finished)' {
+  # formato real: a relacao comeca, o servico falha e o resto da saida se perde
+  $a = $valOk[0..6] + @('10:00:00.03 Relation 130 (TABELA_C)', '10:00:00.03   process pointer page    0 of   47', '10:00:00.04 Validation finished',
+                         'database file appears corrupt ()', '-bad checksum', '-checksum error on database page 1130571')
+  $p = ConvertFrom-FbOnlineValidation -Lines $a -Exit 0
+  Assert-True $p.Aborted 'abortou mesmo com Validation finished'
+  Assert-Equal 1130571 @($p.BadPages)[0] 'pagina do erro'
+  Assert-Equal 'TABELA_C' $p.LastRelation 'ultima relacao no log'
+  Assert-Match $p.ErrorText 'checksum error on database page 1130571' 'mensagem'
+  $b = $valOk[0..6] + @('10:00:00.03 Relation 130 (TABELA_C)', '10:00:00.03 Index 1 (PK_TABELA_C)',
+                         'database file appears corrupt ()', '-bad checksum', '-checksum error on database page 245')
+  $q = ConvertFrom-FbOnlineValidation -Lines $b -Exit 1
+  Assert-True ($q.Aborted -and -not $q.Finished) 'abortou sem Validation finished'
+  Assert-Equal 245 @($q.BadPages)[0] 'pagina do erro (saida cortada)'
+}
+Test-Case 'ConvertTo-FbSimilarLiteral escapa os curingas do SIMILAR TO' {
+  Assert-Equal 'TABELA[_]A' (ConvertTo-FbSimilarLiteral 'TABELA_A') 'underscore'
+  Assert-Equal 'X[%]Y' (ConvertTo-FbSimilarLiteral 'X%Y') 'percent'
+  Assert-Equal 'ABC$1' (ConvertTo-FbSimilarLiteral 'ABC$1') 'cifrao e digitos'
+}
+
 Write-Host "== Unit: execucao de .exe ==" -ForegroundColor Cyan
 Test-Case 'Invoke-FbNative captura stdout+stderr e exit code sem lancar excecao' {
   $ErrorActionPreference = 'Stop'

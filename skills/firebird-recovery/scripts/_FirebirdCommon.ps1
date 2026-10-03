@@ -252,6 +252,87 @@ function Test-FbCorruptionError {
   return ($Text -match '(?i)appears corrupt|wrong page type|is of wrong type|checksum error|consistency check|bugcheck|wrong record length|I/O error during "?(ReadFile|read)|Error while trying to read')
 }
 
+function ConvertFrom-FbOnlineValidation {
+  <#
+    Interpreta a saida do 'fbsvcmgr ... action_validate' (validacao online, FB 2.5.4+).
+    Pagina ilegivel ABORTA a validacao: o servico devolve erro (exit <> 0, linhas sem horario no fim)
+    e o fim da saida se perde - a ultima tabela que aparece pode ser ANTERIOR a que tem a pagina ruim.
+    Por isso a tabela certa vem do numero da pagina no erro (BadPages + Find-FbPageOwner).
+  #>
+  param([string[]]$Lines, $Exit = 0)
+  $hora = '^\d\d:\d\d:\d\d\.\d+\s+'
+  $ok = 0; $ultima = $null; $terminou = $false
+  $comErro = New-Object System.Collections.Generic.List[string]
+  $erro = New-Object System.Collections.Generic.List[string]
+  foreach($l in @($Lines)){
+    $t = "$l".Trim()
+    if(-not $t){ continue }
+    if($t -match ($hora + 'Relation \d+ \((.+?)\) is ok$')){ $ok++; continue }
+    if($t -match ($hora + 'Relation \d+ \((.+?)\) : (\d+) ERRORS found')){ $comErro.Add(('{0} ({1} erros)' -f $Matches[1], $Matches[2])); continue }
+    if($t -match ($hora + 'Relation \d+ \((.+?)\)$')){ $ultima = $Matches[1]; continue }
+    if($t -match ($hora + 'Validation finished')){ $terminou = $true; continue }
+    if($t -match $hora){ continue }
+    $erro.Add($t.TrimStart('-').Trim())          # linha sem horario = erro devolvido pelo servico
+  }
+  $paginas = @([regex]::Matches(($erro -join "`n"), '(?i)database page (\d+)') | ForEach-Object { [long]$_.Groups[1].Value } | Select-Object -Unique)
+  [pscustomobject]@{
+    Finished         = $terminou
+    Aborted          = ($erro.Count -gt 0 -or ($null -ne $Exit -and $Exit -ne 0) -or -not $terminou)
+    TablesOk         = $ok
+    TablesWithErrors = @($comErro)
+    LastRelation     = $ultima
+    ErrorText        = (@($erro) -join ' | ')
+    BadPages         = $paginas
+  }
+}
+
+function ConvertTo-FbSimilarLiteral {
+  <# Nome de tabela como padrao SIMILAR TO literal (val_tab_incl/val_tab_excl): '_' e '%' sao curingas. #>
+  param([string]$Name)
+  return (-join ($Name.ToCharArray() | ForEach-Object { if("$_" -match '[A-Za-z0-9$ ]'){ "$_" } else { "[$_]" } }))
+}
+
+function Find-FbPageOwner {
+  <#
+    Diz de que tabela sao paginas de DADOS procurando o numero delas nas pointer pages de cada tabela
+    (RDB$PAGES, tipo 4) - funciona com a pagina zerada, que nao tem mais o proprio cabecalho.
+    Pointer page (ODS 11): ppg_count em 0x18, ppg_relation em 0x1A, lista de paginas (4 bytes cada) em 0x20.
+    Devolve hashtable pagina -> nome da tabela. Pagina de indice, blob ou de controle nao aparece.
+  #>
+  param(
+    [Parameter(Mandatory = $true)][string]$IsqlPath,
+    [Parameter(Mandatory = $true)][string]$Database,
+    [long[]]$Pages = @(),
+    [string]$User,
+    [string]$Password
+  )
+  $res = @{}
+  if($Pages.Count -eq 0){ return $res }
+  $r = Invoke-FbIsql -IsqlPath $IsqlPath -Database $Database -User $User -Password $Password -Sql ("SET HEADING OFF;`n" +
+    "SELECT P.RDB`$PAGE_NUMBER || '|' || P.RDB`$RELATION_ID || '|' || TRIM(R.RDB`$RELATION_NAME) FROM RDB`$PAGES P " +
+    "JOIN RDB`$RELATIONS R ON R.RDB`$RELATION_ID = P.RDB`$RELATION_ID WHERE P.RDB`$PAGE_TYPE = 4;")
+  $ponteiros = @($r.Lines | Where-Object { $_ -match '^\s*\d+\|\d+\|' } | ForEach-Object {
+    $x = $_.Trim() -split '\|', 3; [pscustomobject]@{ Page = [long]$x[0]; Rel = [int]$x[1]; Nome = $x[2] } } | Sort-Object Page)
+  $ps = [int][BitConverter]::ToUInt16((Read-FbBytes -Path $Database -Offset 16 -Count 2), 0)
+  $alvo = New-Object 'System.Collections.Generic.HashSet[long]'
+  foreach($p in $Pages){ [void]$alvo.Add($p) }
+  $fs = [IO.File]::Open($Database, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+  try {
+    $b = New-Object byte[] $ps
+    foreach($p in $ponteiros){
+      [void]$fs.Seek($p.Page * $ps, 'Begin')
+      if($fs.Read($b, 0, $ps) -lt $ps){ continue }
+      if($b[0] -ne 4 -or [BitConverter]::ToUInt16($b, 0x1A) -ne $p.Rel){ continue }
+      $n = [BitConverter]::ToUInt16($b, 0x18)
+      for($i = 0; $i -lt $n -and (0x24 + 4 * $i) -le $ps; $i++){
+        $pg = [long][BitConverter]::ToUInt32($b, 0x20 + 4 * $i)
+        if($alvo.Contains($pg)){ $res[$pg] = $p.Nome }
+      }
+    }
+  } finally { $fs.Dispose() }
+  return $res
+}
+
 function Get-FbErrorSummary {
   <#
     Resume a saida de erro do isql nas linhas que explicam o problema: o que vem depois de
